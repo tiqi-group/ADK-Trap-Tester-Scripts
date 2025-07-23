@@ -11,6 +11,7 @@ scipy = "^1.14"
 matplotlib ="^3.9"
 pandas="^2.2"
 wavefront-sdk-python="^2.1"
+dwfpy="^1.2.0"
 
 [build-system]
 requires = ["poetry-core"]

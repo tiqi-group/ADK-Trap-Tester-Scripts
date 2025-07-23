@@ -205,19 +205,19 @@ fpc_to_adc_mux = {
 
 def dsub_to_adc_address(dsub_pin: int = 0) -> int:
     fpc_pin = dsub_to_fpc[dsub_pin]
-    mux = fpc_to_adc_mux[fpc_pin]
+    mux = fpc_to_adc_mux[fpc_pin] - 1
     return mux & 0b011111
 
 
 def dsub_to_dac_address(dsub_pin: int = 0) -> int:
     fpc_pin = dsub_to_fpc[dsub_pin]
-    mux_address = fpc_to_dac_mux[fpc_pin]
+    mux_address = fpc_to_dac_mux[fpc_pin] - 1
     return mux_address & 0b011111
 
 
 def dsub_to_dac_en_bits(dsub_pin: int = 0) -> int:
     fpc_pin = dsub_to_fpc[dsub_pin]
-    mux = fpc_to_dac_mux[fpc_pin] & 0b100000
+    mux = (fpc_to_dac_mux[fpc_pin] - 1) & 0b100000
     if mux == 0:
         return 0b10
     return 0b01
@@ -225,15 +225,15 @@ def dsub_to_dac_en_bits(dsub_pin: int = 0) -> int:
 
 def dsub_to_adc_en_bit(dsub_pin: int = 0) -> int:
     fpc_pin = dsub_to_fpc[dsub_pin]
-    mux = fpc_to_adc_mux[fpc_pin] & 0b100000
+    mux = (fpc_to_adc_mux[fpc_pin] - 1) & 0b100000
     if mux == 0:
-        return 0b1
-    return 0b0
+        return 0b0
+    return 0b1
 
 
 def dsub_to_dac_cs_bits(dsub_pin: int = 0) -> int:
     fpc_pin = dsub_to_fpc[dsub_pin]
-    mux = fpc_to_dac_mux[fpc_pin] & 0b100000
+    mux = (fpc_to_dac_mux[fpc_pin] - 1) & 0b100000
     if mux == 0:
         return 0b10
     return 0b01
@@ -241,7 +241,7 @@ def dsub_to_dac_cs_bits(dsub_pin: int = 0) -> int:
 
 def dsub_to_adc_cs_bits(dsub_pin: int = 0) -> int:
     fpc_pin = dsub_to_fpc[dsub_pin]
-    mux = fpc_to_adc_mux[fpc_pin] & 0b100000
+    mux = (fpc_to_adc_mux[fpc_pin] - 1) & 0b100000
     if mux == 0:
         return 0b10
     return 0b01
