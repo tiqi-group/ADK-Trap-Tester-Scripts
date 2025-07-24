@@ -58,7 +58,7 @@ with dwf.Device() as device:
         wavegen[0].setup(function="sine", offset=0.5, amplitude=0.5, start=True)
         t.sleep(0.1)
         # setup single shot
-        scope.single(sample_rate=1e6, buffer_size=4096, configure=True, start=True)
+        scope.single(sample_rate=1e6, buffer_size=4096 * 2, configure=True, start=True)
         t.sleep(0.1)
         wavegen[0].setup(function="sine", offset=0.0, amplitude=0.0, start=True)
         t.sleep(0.1)

@@ -34,7 +34,7 @@ with dwf.Device() as device:
             io[i].setup(enabled=True, state=True)
 
     # do not ground the ADC input
-    io[SW_ADC_TO_GND_IDX].output_state = False
+    io[SW_ADC_TO_GND_IDX].output_state = False  # True for PSi Cryo
     # select current measurement
     io[SW_MEAS_SEL_IDX].output_state = False
     # load scope and wavegen
@@ -42,17 +42,24 @@ with dwf.Device() as device:
     scope = device.analog_input
 
     dsub_pin = np.arange(1, 51, 1)
-    f_sample = 25e6
+    f_sample = 2.5e6
     buffer_size = 8192
     amplitude = 0.8
     nyq = 0.5 * f_sample
-    cutoff = 2e6  # desired cutoff frequency of the filter, Hz
+    cutoff = 2e5  # desired cutoff frequency of the filter, Hz
     normal_cutoff = cutoff / nyq
     b, a = signal.butter(4, normal_cutoff, btype="low", analog=False)
+    # hack for making it work in PSI 2D array
+    # set_adc(io, 25)
 
+    # gnd_pins = (3, 6, 8, 10, 12, 15, 20, 23, 25, 26, 28, 31, 36, 39, 41, 43, 45, 48)
+    gnd_pins = ()
     for i in range(50):
         # skip missing DSUB pins
         pin = i + 1
+        if pin in gnd_pins:
+            continue
+        # have to exclude these for hardware revision v1.0.0
         if pin in (9, 42):
             continue
 
@@ -140,7 +147,7 @@ with dwf.Device() as device:
         R_est2 = popt[1] / 1000 / C_est - 10470
 
         print(
-            f"C_est: {C_est * 1e9}nF, R_est (drop): {R_est1}Ohm, R_est2 (tau) :{R_est2})Ohm"
+            f"Pin: {pin}, C_est: {C_est * 1e9}nF, R_est (drop): {R_est1}Ohm, R_est2 (tau) :{R_est2})Ohm"
         )
     t.sleep(0.1)
     device.analog_io[0][0].value = False

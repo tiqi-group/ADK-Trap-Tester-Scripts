@@ -29,7 +29,7 @@ with dwf.Device() as device:
             io[i].setup(enabled=True, state=True)
 
     # do not ground the ADC input
-    io[SW_ADC_TO_GND_IDX].output_state = False
+    io[SW_ADC_TO_GND_IDX].output_state = False  # True for PSI cryo
     # select current measurement
     io[SW_MEAS_SEL_IDX].output_state = False
     # load scope and wavegen
@@ -42,6 +42,13 @@ with dwf.Device() as device:
     freq = 1e2  # Hz
     _t = np.array([i / sample_rate for i in range(n_samples)])
     reference = 0.5 * np.sin(_t * freq * 2 * np.pi)
+
+    # hack for making it work in PSI 2D array
+    set_adc(io, 25)
+
+    high_imp_shorts = []
+    low_imp_shorts = []
+
     for i in range(50):
         # skip missing DSUB pins
         pin = i + 1
@@ -93,9 +100,18 @@ with dwf.Device() as device:
         print(
             f"Max Correlation Pin {pin} Ch1 to Ref: {corr_ref_ch1}, Ref to Ch2: {corr_ref_ch2}, Ch1 to Ch2: {corr_ch1_ch2}"
         )
-        if corr_ref_ch1 > corr_ref_ch2 and corr_ref_ch1 > corr_ch1_ch2:
-            print("no short detected")
-        elif corr_ch1_ch2 > corr_ref_ch2:
+        if corr_ref_ch1 > corr_ch1_ch2 * 10:
+            Vpp_ch2 = (
+                np.max(ch2) - np.min(ch2)
+            ) / 25.0  # divide by voltage gain of INA
+            Ipp_ch2 = Vpp_ch2 / 470
+            if Ipp_ch2 < 10e-6:
+                print("no short detected")
+            else:
+                print("probably high imp short")
+        elif (
+            corr_ch1_ch2 > 10 and corr_ref_ch1 > 10 and corr_ref_ch2 > 10
+        ):  # magic number from experience :-)
             Vpp_ch2 = (
                 np.max(ch2) - np.min(ch2)
             ) / 25.0  # divide by voltage gain of INA
@@ -103,6 +119,7 @@ with dwf.Device() as device:
             R_short_est = (470.0 / Vpp_ch2) - (470.0 + 10000.0)
 
             print(f"high impedance short detected, estimate: {R_short_est}")
+            high_imp_shorts.append(pin)
 
         else:
             Vpp_ch2 = (
@@ -112,8 +129,11 @@ with dwf.Device() as device:
             R_short_est = (470.0 / Vpp_ch2) - (470.0 + 10000.0)
             if R_short_est > 1000:
                 i -= 1
-                break
+                continue
 
             print(f"low impedance short detected, estimate: {R_short_est}")
+            low_imp_shorts.append(pin)
     t.sleep(0.1)
     device.analog_io[0][0].value = False
+    print("Low impedance shorts" + f"{low_imp_shorts}")
+    print("High impedance shorts" + f"{high_imp_shorts}")
