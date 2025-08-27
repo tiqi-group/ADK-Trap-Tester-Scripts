@@ -6,12 +6,28 @@ from scipy import signal
 from scipy.optimize import curve_fit
 from utils import *
 
+import matplotlib.pyplot as plt
+
 """-----------------------------------------------------------------------"""
 
 
-def exp_decay(x, a, b, c):
-    return a * np.exp(-x / b) + c
+def step_double_rc(x, c1, c2, r1, r2, t_start, V_end):
+    idx_0 = np.argwhere(x < t_start)
+    x[idx_0] = t_start
+    tau1 = r1 * c1
+    tau2 = r2 * c2
+    tau3 = r1 * c2
+    T = np.sqrt(tau1**2 - 2*tau1 * (tau2 - tau3) + tau2**2 + 2 * tau2 * tau3 + tau3**2)
 
+    exp1 = T / (tau1*tau2)
+    exp2 = -(1 + (T + tau2 + tau3) / tau1) / 2.0 / tau2
+
+    term1 = (tau2 - tau3 - tau1 + T) / 2.0 / T * np.exp((x - t_start) * exp2)
+    term2 = (tau1 - tau2 + tau3 + T) / 2.0 / T * np.exp((x - t_start)  * (exp1 + exp2))
+
+    res = V_end * (1 - (term1 + term2))
+    res[idx_0] = 0
+    return res
 
 with dwf.Device() as device:
     # connect to the device
@@ -42,7 +58,7 @@ with dwf.Device() as device:
     scope = device.analog_input
 
     dsub_pin = np.arange(1, 51, 1)
-    f_sample = 2.5e6
+    f_sample = 25e6
     buffer_size = 8192
     amplitude = 0.8
     nyq = 0.5 * f_sample
@@ -73,12 +89,11 @@ with dwf.Device() as device:
         wavegen[0].setup(
             frequency=1,
             function="square",
-            offset=0.5 * amplitude,
-            amplitude=0.5 * amplitude,
+            offset=0.5 * amplitude / GAIN_FRONTEND,
+            amplitude=0.5 * amplitude / GAIN_FRONTEND,
             start=True,
         )
 
-        scope[0].setup(range=5)
         scope.setup_edge_trigger(
             mode="normal", channel=0, slope="rising", level=0.5, hysteresis=0.01
         )
@@ -95,12 +110,11 @@ with dwf.Device() as device:
 
         v_divider = signal.filtfilt(b, a, scope[0].get_data())
         i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / 470 / 25  # A
-        timestamp = np.array([i / f_sample for i in range(buffer_size)]) * 1000  # ms
+        timestamp = np.array([i / f_sample for i in range(buffer_size)])   # ms
 
         i_offset = np.mean(i_to_trap[:100])
         i_to_trap_no_offset = i_to_trap - i_offset
-        C_baseline = np.sum(i_to_trap_no_offset) / f_sample / amplitude / GAIN_FRONTEND
-
+        C_baseline = np.sum(i_to_trap_no_offset) / f_sample / amplitude
         # restore DAC MUX
         for i in range(2):
             io[EN_DAC1_IDX + i].output_state = dac_en_sto[i]
@@ -115,39 +129,29 @@ with dwf.Device() as device:
         i_offset = np.mean(i_to_trap[:100])
         i_to_trap_no_offset = i_to_trap - i_offset
         C_est = (
-            np.sum(i_to_trap_no_offset) / f_sample / amplitude / GAIN_FRONTEND
+            np.sum(i_to_trap_no_offset) / f_sample / amplitude
             - C_baseline
         )
+        if C_est < 0:
+            C_est = 1e-12
         # get discharge measurement
         scope.setup_edge_trigger(
-            mode="normal", channel=0, slope="falling", level=0.5, hysteresis=0.01
+            mode="normal", channel=0, slope="rising", level=0.05, hysteresis=0.01
         )
+        t.sleep(0.1)
         scope.single(
             sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
         )
-
         v_divider = scope[0].get_data()
-        t_start_idx = np.argwhere(timestamp > 0.15)[0][0]
-        _t = timestamp[t_start_idx:] - timestamp[t_start_idx]
         popt, pcov = curve_fit(
-            exp_decay,
-            _t,
-            v_divider[t_start_idx:],
-            bounds=([0, 0, 0], [2.1, 10000, 0.2]),
+            step_double_rc,
+            timestamp,
+            v_divider,
+            bounds=([0.98*C_baseline, 0.98*C_est, 10460, 100, timestamp[0], 0.9*amplitude], [1.02*C_baseline, 1.02*C_est, 10500, 10000,timestamp[-1],1.1*amplitude]),
         )
-        print(popt)
-        t_0_idx = np.argmin(
-            signal.filtfilt(b, a, np.diff(v_divider) / np.diff(timestamp))
-        )
+        v_fit = step_double_rc(timestamp, popt[0],popt[1],popt[2],popt[3],popt[4],popt[5])
+        print(f"Pin {pin}, C_filter_est: {popt[1]:.3}, R_filter_est{popt[3]:.3}")
 
-        t_0 = timestamp[t_0_idx]
-        v_ref_ideal = exp_decay(t_0 - timestamp[t_start_idx], popt[0], popt[1], popt[2])
 
-        R_est1 = ((np.max(v_divider) / v_ref_ideal) - 1) * 10470
-        R_est2 = popt[1] / 1000 / C_est - 10470
-
-        print(
-            f"Pin: {pin}, C_est: {C_est * 1e9}nF, R_est (drop): {R_est1}Ohm, R_est2 (tau) :{R_est2})Ohm"
-        )
     t.sleep(0.1)
     device.analog_io[0][0].value = False

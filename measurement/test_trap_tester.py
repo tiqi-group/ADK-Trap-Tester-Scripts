@@ -5,6 +5,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 from utils import *
 
+import matplotlib.pyplot as plt
+
 """-----------------------------------------------------------------------"""
 
 
@@ -41,7 +43,7 @@ with dwf.Device() as device:
     for i in range(len(dsub_pin)):
         # skip missing DSUB pins
         pin = i + 1
-        if pin in (9, 42):
+        if pin in ([DSUB_GND_PIN]):
             continue
 
         # set ADC and DAC mux to same channel
@@ -84,4 +86,44 @@ with dwf.Device() as device:
     plt.ylim((-1.5, 1.5))
     plt.show()
     t.sleep(0.1)
+
+    # test current measurement
+    # do ground the ADC input
+    io[SW_ADC_TO_GND_IDX].output_state = True
+    # route ADC MUX signal to ADK CH2 (according to BNC adapter)
+    io[SW_MEAS_SEL_IDX].output_state = False
+
+    # setup scope for single trigger
+    scope[0].setup(range=5.0)
+    scope[1].setup(range=5.0)
+    # start waveform generator and playback a sine wave
+    wavegen[0].setup(
+        frequency=1,
+        function="square",
+        offset=0.5,
+        amplitude=0.5,
+        start=True,
+    )
+    scope[1].setup(range=5)
+    scope.setup_edge_trigger(
+            mode="normal", channel=1, slope="rising", level=0.1, hysteresis=0.01
+        )
+    t.sleep(0.5)
+
+    f_sample = 2.5e6
+    buffer_size = 8192
+    scope.single(
+            sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
+    )
+    current_measured = scope[1].get_data()  / 470 / 25 * 1e6 # uA
+    plt.plot(np.array(range(buffer_size)) / f_sample * 1000, current_measured * 1000) #mA
+    plt.title("Current measurement")
+    plt.xlabel("Time [ms]")
+    plt.ylabel("Current [mA]")
+    plt.show()
+
+    avg_current = np.mean(current_measured[int(-buffer_size/2) + 40:-1])
+    print(f"Expected current: 191uA, measured current: {avg_current:.2f} uA")
+    print(f"Relative error: {(avg_current - 191.0) / 191.0:.4f}")
+
     device.analog_io[0][0].value = False

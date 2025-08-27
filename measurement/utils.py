@@ -10,6 +10,7 @@ CS_ADC1_IDX = 9
 CS_DAC1_IDX = 11
 WR_IDX = 8
 GAIN_FRONTEND = 2
+DSUB_GND_PIN = 9
 
 
 def set_dac(io, dsub_pin):
