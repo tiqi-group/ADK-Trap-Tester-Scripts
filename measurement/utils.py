@@ -1,6 +1,7 @@
 import time as t
 
 from mux_mapping import *
+import numpy as np
 
 ADC_ENABLE_IDX = 5
 EN_DAC1_IDX = 13
@@ -9,8 +10,14 @@ SW_ADC_TO_GND_IDX = 6
 CS_ADC1_IDX = 9
 CS_DAC1_IDX = 11
 WR_IDX = 8
+
 GAIN_FRONTEND = 2
+R_REF = 10470
+R_SENSE = 470
+SENSE_MAG = 25
+
 DSUB_GND_PIN = 9
+FPC_SPARE_CONDUCTOR = 42
 
 
 def set_dac(io, dsub_pin):
@@ -69,3 +76,21 @@ def set_adc(io, dsub_pin):
     for i in range(2):
         io[CS_DAC1_IDX + i].output_state = True
         io[CS_ADC1_IDX + i].output_state = True
+
+def step_double_rc(x, c1, c2, r1, r2, t_start, V_end):
+    idx_0 = np.argwhere(x < t_start)
+    x[idx_0] = t_start
+    tau1 = r1 * c1
+    tau2 = r2 * c2
+    tau3 = r1 * c2
+    T = np.sqrt(tau1**2 - 2*tau1 * (tau2 - tau3) + tau2**2 + 2 * tau2 * tau3 + tau3**2)
+
+    exp1 = T / (tau1*tau2)
+    exp2 = -(1 + (T + tau2 + tau3) / tau1) / 2.0 / tau2
+
+    term1 = (tau2 - tau3 - tau1 + T) / 2.0 / T * np.exp((x - t_start) * exp2)
+    term2 = (tau1 - tau2 + tau3 + T) / 2.0 / T * np.exp((x - t_start)  * (exp1 + exp2))
+
+    res = V_end * (1 - (term1 + term2))
+    res[idx_0] = 0
+    return res

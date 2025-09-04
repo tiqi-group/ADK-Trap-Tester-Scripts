@@ -5,29 +5,10 @@ import numpy as np
 from scipy import signal
 from scipy.optimize import curve_fit
 from utils import *
-
+import pandas as pd
 import matplotlib.pyplot as plt
 
 """-----------------------------------------------------------------------"""
-
-
-def step_double_rc(x, c1, c2, r1, r2, t_start, V_end):
-    idx_0 = np.argwhere(x < t_start)
-    x[idx_0] = t_start
-    tau1 = r1 * c1
-    tau2 = r2 * c2
-    tau3 = r1 * c2
-    T = np.sqrt(tau1**2 - 2*tau1 * (tau2 - tau3) + tau2**2 + 2 * tau2 * tau3 + tau3**2)
-
-    exp1 = T / (tau1*tau2)
-    exp2 = -(1 + (T + tau2 + tau3) / tau1) / 2.0 / tau2
-
-    term1 = (tau2 - tau3 - tau1 + T) / 2.0 / T * np.exp((x - t_start) * exp2)
-    term2 = (tau1 - tau2 + tau3 + T) / 2.0 / T * np.exp((x - t_start)  * (exp1 + exp2))
-
-    res = V_end * (1 - (term1 + term2))
-    res[idx_0] = 0
-    return res
 
 with dwf.Device() as device:
     # connect to the device
@@ -50,108 +31,168 @@ with dwf.Device() as device:
             io[i].setup(enabled=True, state=True)
 
     # do not ground the ADC input
-    io[SW_ADC_TO_GND_IDX].output_state = False  # True for PSi Cryo
+    io[SW_ADC_TO_GND_IDX].output_state = False  # True for PSI Cryo
     # select current measurement
     io[SW_MEAS_SEL_IDX].output_state = False
     # load scope and wavegen
     wavegen = device.analog_output
     scope = device.analog_input
 
-    dsub_pin = np.arange(1, 51, 1)
+    dsub_idx = np.arange(1, 51, 1)
+    invalid_pins_lst = [DSUB_GND_PIN, FPC_SPARE_CONDUCTOR]
+    dsub_pins = list(set(dsub_idx).difference(set(invalid_pins_lst)))
+
+    # settings for measurement and digital filter
     f_sample = 25e6
     buffer_size = 8192
+    f_square = f_sample / (buffer_size *50)
     amplitude = 0.8
+    i_short = amplitude / R_REF
     nyq = 0.5 * f_sample
     cutoff = 2e5  # desired cutoff frequency of the filter, Hz
     normal_cutoff = cutoff / nyq
     b, a = signal.butter(4, normal_cutoff, btype="low", analog=False)
+
+    n_avg = 10
     # hack for making it work in PSI 2D array
     # set_adc(io, 25)
 
-    # gnd_pins = (3, 6, 8, 10, 12, 15, 20, 23, 25, 26, 28, 31, 36, 39, 41, 43, 45, 48)
-    gnd_pins = ()
-    for i in range(50):
-        # skip missing DSUB pins
-        pin = i + 1
-        if pin in gnd_pins:
-            continue
-        # have to exclude these for hardware revision v1.0.0
-        if pin in (9, 42):
-            continue
+    # get baseline measurements
+    # this entails measure parasitics with the DAC MUX turned off
+    for i in range(2):
+        io[EN_DAC1_IDX + i].output_state = True
+
+    # setup scope for single trigger
+    scope[0].setup(range=5.0)
+    scope[1].setup(range=5.0)
+    # start waveform generator and playback a rectangular wave
+    wavegen[0].setup(
+        frequency=f_square,
+        function="square",
+        offset=0.5 * amplitude / GAIN_FRONTEND,
+        amplitude=0.5 * amplitude / GAIN_FRONTEND,
+        start=True,
+    )
+
+    # trigger on rising edge of current measurement
+    # the current measurement should even trigger when
+    # the output is shorted
+    scope.setup_edge_trigger(
+        mode="normal", channel=1, slope="rising", level=0.5, hysteresis=0.01
+    )
+
+    # get measuremrnt
+    scope.single(
+        sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
+    )
+    v_divider = signal.filtfilt(b, a, scope[0].get_data())
+    i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / (R_SENSE * SENSE_MAG)  # A
+    timestamp = np.array([i / f_sample for i in range(buffer_size)])   # ms
+
+    i_offset = np.mean(i_to_trap[:100]) # current drive at 0V output (avg over 100 samples
+    i_to_trap_no_offset = i_to_trap - i_offset
+
+    # parasitics
+    ## numerical integration of current over time
+    C_baseline = np.sum(i_to_trap_no_offset) / f_sample / amplitude # C = Q / V
+    # leakage current, measurement noise, etc
+    ## ss means steady-state....
+    I_ss_baseline = np.mean(i_to_trap[-100:]) # current drive at high output (avg over 100 samples)
+
+    df_list = []
+    for pin in dsub_pins:
 
         # set DAC channel
         set_dac(io, pin)
 
-        # setup scope for single trigger
-        scope[0].setup(range=5.0)
-        scope[1].setup(range=5.0)
-        # start waveform generator and playback a sine wave
-        wavegen[0].setup(
-            frequency=1,
-            function="square",
-            offset=0.5 * amplitude / GAIN_FRONTEND,
-            amplitude=0.5 * amplitude / GAIN_FRONTEND,
-            start=True,
-        )
-
-        scope.setup_edge_trigger(
-            mode="normal", channel=0, slope="rising", level=0.5, hysteresis=0.01
-        )
-
-        # turn off DAC for parasitic measurement
-        dac_en_sto = [True, True]
-        for i in range(2):
-            dac_en_sto[i] = io[EN_DAC1_IDX + i].output_state
-            io[EN_DAC1_IDX + i].output_state = True
-
         scope.single(
             sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
         )
 
         v_divider = signal.filtfilt(b, a, scope[0].get_data())
-        i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / 470 / 25  # A
-        timestamp = np.array([i / f_sample for i in range(buffer_size)])   # ms
+        i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / (R_SENSE * SENSE_MAG) # A
 
         i_offset = np.mean(i_to_trap[:100])
-        i_to_trap_no_offset = i_to_trap - i_offset
-        C_baseline = np.sum(i_to_trap_no_offset) / f_sample / amplitude
-        # restore DAC MUX
-        for i in range(2):
-            io[EN_DAC1_IDX + i].output_state = dac_en_sto[i]
+        i_end = np.mean(i_to_trap[-100:])
+        v_end = np.mean(v_divider[-100:])
 
-        scope.single(
-            sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
-        )
+        if (0.95 * amplitude < v_end and v_end < 1.05 * amplitude): # settled v?
+            if (i_end > 2 * I_ss_baseline): # look for elevated current
+                print("Fishy stuff, probably high impedance short")
+                dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : -1, 'Bandwidth' : -1, 'Perr_max' : -1}
+                df_list.append(dict_res)
+                continue
+            else:
+                print("nominal")
+        else:
+            # see if charging done but filter is shorted to GND
+            # on trap electrode side
+            # R_est
+            R_from_i_end = (amplitude / i_end) - R_REF
+            ratio = v_end / amplitude
+            R_from_v_end = (ratio / (1 - ratio)) * R_REF
+            R_mean = -1
+            if (np.abs((R_from_i_end / R_from_v_end) -  1) < 0.05): # check if similar estimates
+                print("electrode possibly shorted after filter")
+                R_mean = 0.5 * (R_from_i_end + R_from_v_end)
+                df_list.append(dict_res)
+            else:
+                # if R_est are dissimilar then R is probably very small
+                # (R_from_i_end can also be negative which is caught)
+                if (0.95 * i_short < i_end and i_end < 1.05 * i_short):
+                    print("wire possible shorted before filter")
+                    R_mean = 0
+                else:
+                    print("wut")
+            print(f"R_filter = {R_mean}")
+            dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : R_mean, 'Bandwidth' : -1, 'Perr_max' : -1}
+            continue # do not perform rest of script in off-nominal cases
 
-        v_divider = signal.filtfilt(b, a, scope[0].get_data())
-        i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / 470 / 25  # A
-
-        i_offset = np.mean(i_to_trap[:100])
-        i_to_trap_no_offset = i_to_trap - i_offset
-        C_est = (
-            np.sum(i_to_trap_no_offset) / f_sample / amplitude
-            - C_baseline
-        )
-        if C_est < 0:
-            C_est = 1e-12
-        # get discharge measurement
+        #setup trigger on voltage
         scope.setup_edge_trigger(
-            mode="normal", channel=0, slope="rising", level=0.05, hysteresis=0.01
+                mode="normal", channel=0, slope="rising", level=0.05, hysteresis=0.01
         )
-        t.sleep(0.1)
-        scope.single(
-            sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
-        )
-        v_divider = scope[0].get_data()
-        popt, pcov = curve_fit(
-            step_double_rc,
-            timestamp,
-            v_divider,
-            bounds=([0.98*C_baseline, 0.98*C_est, 10460, 100, timestamp[0], 0.9*amplitude], [1.02*C_baseline, 1.02*C_est, 10500, 10000,timestamp[-1],1.1*amplitude]),
-        )
-        v_fit = step_double_rc(timestamp, popt[0],popt[1],popt[2],popt[3],popt[4],popt[5])
-        print(f"Pin {pin}, C_filter_est: {popt[1]:.3}, R_filter_est{popt[3]:.3}")
+        C_est = np.zeros((n_avg))
+        R_est = np.zeros((n_avg))
+        Perr = np.zeros((6))
+        for i in range(n_avg):
+            # get discharge measurement
+            scope.single(
+                sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
+            )
+            v_divider = signal.filtfilt(b, a, scope[0].get_data())
+            i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / (R_SENSE * SENSE_MAG) # A
+            i_to_trap_no_offset = i_to_trap - i_offset
+            C_est_i = (
+                np.sum(i_to_trap_no_offset) / f_sample / amplitude
+                - C_baseline
+            )
+            if C_est_i < 0:
+                C_est_i = 1e-15
+            v_divider = scope[0].get_data()
+            lower = [0.98*C_baseline, 0.98*C_est_i, 10460, 100, timestamp[0], 0.9*amplitude]
+            upper = [1.02*C_baseline, 1.02*C_est_i, 10500, 10000,timestamp[-1],1.1*amplitude]
+            _t = timestamp.copy() # curve_fit manipulates its inputs (pass by reference shenanigans) so one has to pass a copy of timestamp...
+            popt, pcov = curve_fit(
+                step_double_rc,
+                _t,
+                v_divider,
+                bounds=(lower, upper),
+            )
+            C_est[i] = popt[1]
+            R_est[i] = popt[3]
+            perr = np.sqrt(np.diag(pcov))
+            Perr += perr / n_avg
+            #v_fit = step_double_rc(timestamp, popt[0],popt[1],popt[2],popt[3],popt[4],popt[5])
+        C_est_mean = np.mean(C_est)
+        R_est_mean = np.mean(R_est)
+        bandwidth = 1 / (C_est_mean * R_est_mean * 2 * np.pi)
+        Perr_max_param = np.max(Perr[:4]) # only include R and C values, ignore offset and final value
+        dict_res = {'DSUB pin' : pin ,'Shorted' : False ,'C_filter' : C_est_mean, 'R_filter' : R_est_mean, 'Bandwidth' : bandwidth, 'Perr_max' : Perr_max_param}
+        df_list.append(dict_res)
+        print(f"Pin {pin}, C_filter_est: {C_est_mean:.3}, R_filter_est{R_est_mean:.3}, bandwidth: {bandwidth:.3}, Perr max: {Perr_max_param:.3}")
 
-
-    t.sleep(0.1)
+    df = pd.DataFrame(df_list, columns=['DSUB pin','Shorted','C_filter','R_filter','Bandwidth', 'Perr_max'])
+    timestr = t.strftime("%Y%m%d-%H%M%S")
+    df.to_json(f'results/filter_test_{timestr}.json')
     device.analog_io[0][0].value = False
