@@ -1,5 +1,5 @@
 import time as t
-
+import threading
 import dwfpy as dwf
 import numpy as np
 from scipy import signal
@@ -9,6 +9,13 @@ import pandas as pd
 import matplotlib.pyplot as plt
 
 """-----------------------------------------------------------------------"""
+
+N_DSUB = 8
+file_prefix="test_board"
+
+dsub_idx = np.arange(1, 51, 1)
+invalid_pins_lst = [DSUB_GND_PIN, FPC_SPARE_CONDUCTOR]
+dsub_pins = list(set(dsub_idx).difference(set(invalid_pins_lst)))
 
 with dwf.Device() as device:
     # connect to the device
@@ -38,14 +45,10 @@ with dwf.Device() as device:
     wavegen = device.analog_output
     scope = device.analog_input
 
-    dsub_idx = np.arange(1, 51, 1)
-    invalid_pins_lst = [DSUB_GND_PIN, FPC_SPARE_CONDUCTOR]
-    dsub_pins = list(set(dsub_idx).difference(set(invalid_pins_lst)))
-
     # settings for measurement and digital filter
     f_sample = 25e6
     buffer_size = 8192
-    f_square = f_sample / (buffer_size *50)
+    f_square = f_sample / (buffer_size * 50)
     amplitude = 0.8
     i_short = amplitude / R_REF
     nyq = 0.5 * f_sample
@@ -100,99 +103,108 @@ with dwf.Device() as device:
     I_ss_baseline = np.mean(i_to_trap[-100:]) # current drive at high output (avg over 100 samples)
 
     df_list = []
-    for pin in dsub_pins:
+    for k in range(N_DSUB):
+        for pin in dsub_pins:
 
-        # set DAC channel
-        set_dac(io, pin)
+            # set DAC channel
+            set_dac(io, pin)
 
-        scope.single(
-            sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
-        )
-
-        v_divider = signal.filtfilt(b, a, scope[0].get_data())
-        i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / (R_SENSE * SENSE_MAG) # A
-
-        i_offset = np.mean(i_to_trap[:100])
-        i_end = np.mean(i_to_trap[-100:])
-        v_end = np.mean(v_divider[-100:])
-
-        if (0.95 * amplitude < v_end and v_end < 1.05 * amplitude): # settled v?
-            if (i_end > 2 * I_ss_baseline): # look for elevated current
-                print("Fishy stuff, probably high impedance short")
-                dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : -1, 'Bandwidth' : -1, 'Perr_max' : -1}
-                df_list.append(dict_res)
-                continue
-            else:
-                print("nominal")
-        else:
-            # see if charging done but filter is shorted to GND
-            # on trap electrode side
-            # R_est
-            R_from_i_end = (amplitude / i_end) - R_REF
-            ratio = v_end / amplitude
-            R_from_v_end = (ratio / (1 - ratio)) * R_REF
-            R_mean = -1
-            if (np.abs((R_from_i_end / R_from_v_end) -  1) < 0.05): # check if similar estimates
-                print("electrode possibly shorted after filter")
-                R_mean = 0.5 * (R_from_i_end + R_from_v_end)
-                df_list.append(dict_res)
-            else:
-                # if R_est are dissimilar then R is probably very small
-                # (R_from_i_end can also be negative which is caught)
-                if (0.95 * i_short < i_end and i_end < 1.05 * i_short):
-                    print("wire possible shorted before filter")
-                    R_mean = 0
-                else:
-                    print("wut")
-            print(f"R_filter = {R_mean}")
-            dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : R_mean, 'Bandwidth' : -1, 'Perr_max' : -1}
-            continue # do not perform rest of script in off-nominal cases
-
-        #setup trigger on voltage
-        scope.setup_edge_trigger(
-                mode="normal", channel=0, slope="rising", level=0.05, hysteresis=0.01
-        )
-        C_est = np.zeros((n_avg))
-        R_est = np.zeros((n_avg))
-        Perr = np.zeros((6))
-        for i in range(n_avg):
-            # get discharge measurement
             scope.single(
                 sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
             )
+
             v_divider = signal.filtfilt(b, a, scope[0].get_data())
             i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / (R_SENSE * SENSE_MAG) # A
-            i_to_trap_no_offset = i_to_trap - i_offset
-            C_est_i = (
-                np.sum(i_to_trap_no_offset) / f_sample / amplitude
-                - C_baseline
-            )
-            if C_est_i < 0:
-                C_est_i = 1e-15
-            v_divider = scope[0].get_data()
-            lower = [0.98*C_baseline, 0.98*C_est_i, 10460, 100, timestamp[0], 0.9*amplitude]
-            upper = [1.02*C_baseline, 1.02*C_est_i, 10500, 10000,timestamp[-1],1.1*amplitude]
-            _t = timestamp.copy() # curve_fit manipulates its inputs (pass by reference shenanigans) so one has to pass a copy of timestamp...
-            popt, pcov = curve_fit(
-                step_double_rc,
-                _t,
-                v_divider,
-                bounds=(lower, upper),
-            )
-            C_est[i] = popt[1]
-            R_est[i] = popt[3]
-            perr = np.sqrt(np.diag(pcov))
-            Perr += perr / n_avg
-            #v_fit = step_double_rc(timestamp, popt[0],popt[1],popt[2],popt[3],popt[4],popt[5])
-        C_est_mean = np.mean(C_est)
-        R_est_mean = np.mean(R_est)
-        bandwidth = 1 / (C_est_mean * R_est_mean * 2 * np.pi)
-        Perr_max_param = np.max(Perr[:4]) # only include R and C values, ignore offset and final value
-        dict_res = {'DSUB pin' : pin ,'Shorted' : False ,'C_filter' : C_est_mean, 'R_filter' : R_est_mean, 'Bandwidth' : bandwidth, 'Perr_max' : Perr_max_param}
-        df_list.append(dict_res)
-        print(f"Pin {pin}, C_filter_est: {C_est_mean:.3}, R_filter_est{R_est_mean:.3}, bandwidth: {bandwidth:.3}, Perr max: {Perr_max_param:.3}")
 
-    df = pd.DataFrame(df_list, columns=['DSUB pin','Shorted','C_filter','R_filter','Bandwidth', 'Perr_max'])
+            i_offset = np.mean(i_to_trap[:100])
+            i_end = np.mean(i_to_trap[-100:])
+            v_end = np.mean(v_divider[-100:])
+
+            if (0.95 * amplitude < v_end and v_end < 1.05 * amplitude): # settled v?
+                if (i_end > 2 * I_ss_baseline): # look for elevated current
+                    print("Fishy stuff, probably high impedance short")
+                    dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : -1, 'Bandwidth' : -1, 'Perr_max' : -1}
+                    df_list.append(dict_res)
+                    continue
+                else:
+                    print("nominal")
+            else:
+                # see if charging done but filter is shorted to GND
+                # on trap electrode side
+                # R_est
+                R_from_i_end = (amplitude / i_end) - R_REF
+                ratio = v_end / amplitude
+                R_from_v_end = (ratio / (1 - ratio)) * R_REF
+                R_mean = -1
+                if (np.abs((R_from_i_end / R_from_v_end) -  1) < 0.05): # check if similar estimates
+                    print("electrode possibly shorted after filter")
+                    R_mean = 0.5 * (R_from_i_end + R_from_v_end)
+                    df_list.append(dict_res)
+                else:
+                    # if R_est are dissimilar then R is probably very small
+                    # (R_from_i_end can also be negative which is caught)
+                    if (0.95 * i_short < i_end and i_end < 1.05 * i_short):
+                        print("wire possible shorted before filter")
+                        R_mean = 0
+                    else:
+                        print("wut")
+                print(f"R_filter = {R_mean}")
+                dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : R_mean, 'Bandwidth' : -1, 'Perr_max' : -1}
+                continue # do not perform rest of script in off-nominal cases
+
+            #setup trigger on voltage
+            scope.setup_edge_trigger(
+                    mode="normal", channel=0, slope="rising", level=0.05, hysteresis=0.01
+            )
+            C_est = np.zeros((n_avg))
+            R_est = np.zeros((n_avg))
+            Perr = np.zeros((6))
+            for i in range(n_avg):
+                # get discharge measurement
+                scope.single(
+                    sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
+                )
+                v_divider = signal.filtfilt(b, a, scope[0].get_data())
+                i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / (R_SENSE * SENSE_MAG) # A
+                i_to_trap_no_offset = i_to_trap - i_offset
+                C_est_i = (
+                    np.sum(i_to_trap_no_offset) / f_sample / amplitude
+                    - C_baseline
+                )
+                if C_est_i < 0:
+                    C_est_i = 1e-15
+                v_divider = scope[0].get_data()
+                lower = [0.98*C_baseline, 0.98*C_est_i, 10460, 100, timestamp[0], 0.9*amplitude]
+                upper = [1.02*C_baseline, 1.02*C_est_i, 10500, 10000,timestamp[-1],1.1*amplitude]
+                _t = timestamp.copy() # curve_fit manipulates its inputs (pass by reference shenanigans) so one has to pass a copy of timestamp...
+                popt, pcov = curve_fit(
+                    step_double_rc,
+                    _t,
+                    v_divider,
+                    bounds=(lower, upper),
+                )
+                C_est[i] = popt[1]
+                R_est[i] = popt[3]
+                perr = np.sqrt(np.diag(pcov))
+                Perr += perr / n_avg
+                #v_fit = step_double_rc(timestamp, popt[0],popt[1],popt[2],popt[3],popt[4],popt[5])
+            C_est_mean = np.mean(C_est)
+            R_est_mean = np.mean(R_est)
+            bandwidth = 1 / (C_est_mean * R_est_mean * 2 * np.pi)
+            Perr_max_param = np.max(Perr[:4]) # only include R and C values, ignore offset and final value
+            dict_res = {'DSUB connector' : k, 'DSUB pin' : pin ,'Shorted' : False ,'C_filter_nF' : C_est_mean*1e9, 'R_filter_Ohm' : R_est_mean, 'Bandwidth' : bandwidth, 'Perr_max' : Perr_max_param}
+            df_list.append(dict_res)
+            print(f"DSUB connector' : {k}, Pin {pin}, C_filter_est: {C_est_mean:.3}, R_filter_est{R_est_mean:.3}, bandwidth: {bandwidth:.3}, Perr max: {Perr_max_param:.3}")
+
+        # style points for blinking LED
+        if(k + 1 < N_DSUB):
+            thread_blink=threading.Thread(target=blink_user_led, args=(io, 0.5))
+            thread_blink.start()
+            _ = input(f"Switch to DSUB Connector {k+1} and press Enter to continue")
+            thread_blink.do_run = False
+            thread_blink.join()
+
+    df = pd.DataFrame(df_list, columns=['DSUB connector', 'DSUB pin','Shorted','C_filter_nF','R_filter_Ohm','Bandwidth', 'Perr_max'])
     timestr = t.strftime("%Y%m%d-%H%M%S")
-    df.to_json(f'results/filter_test_{timestr}.json')
+    df.to_json(f'results/{file_prefix}_filter_test_{timestr}.json', double_precision=15, indent=1)
     device.analog_io[0][0].value = False

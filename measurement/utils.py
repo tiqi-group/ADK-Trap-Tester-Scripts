@@ -1,5 +1,5 @@
 import time as t
-
+import threading
 from mux_mapping import *
 import numpy as np
 
@@ -10,6 +10,7 @@ SW_ADC_TO_GND_IDX = 6
 CS_ADC1_IDX = 9
 CS_DAC1_IDX = 11
 WR_IDX = 8
+USR_LED_IDX = 15
 
 GAIN_FRONTEND = 2
 R_REF = 10470
@@ -94,3 +95,9 @@ def step_double_rc(x, c1, c2, r1, r2, t_start, V_end):
     res = V_end * (1 - (term1 + term2))
     res[idx_0] = 0
     return res
+
+def blink_user_led(io, period):
+    thread = threading.current_thread()
+    while getattr(thread, "do_run", True):
+        io[USR_LED_IDX].output_state =  1 - io[USR_LED_IDX].output_state
+        t.sleep(period/2.0)
