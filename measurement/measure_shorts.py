@@ -3,7 +3,7 @@ import time as t
 import dwfpy as dwf
 import numpy as np
 from scipy import signal
-from utils import *
+from trap_tester.utils import *
 
 """-----------------------------------------------------------------------"""
 

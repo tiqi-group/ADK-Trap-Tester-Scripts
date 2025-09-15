@@ -3,7 +3,7 @@ import time as t
 import dwfpy as dwf
 import matplotlib.pyplot as plt
 import numpy as np
-from utils import *
+from trap_tester.utils import *
 
 """-----------------------------------------------------------------------"""
 

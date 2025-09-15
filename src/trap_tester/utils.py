@@ -1,6 +1,6 @@
 import time as t
 import threading
-from mux_mapping import *
+from trap_tester.mux_mapping import *
 import numpy as np
 
 ADC_ENABLE_IDX = 5
@@ -12,10 +12,10 @@ CS_DAC1_IDX = 11
 WR_IDX = 8
 USR_LED_IDX = 15
 
-GAIN_FRONTEND = 2
-R_REF = 10470
-R_SENSE = 470
-SENSE_MAG = 25
+GAIN_FRONTEND = 2 # V/V
+R_REF = 10470 # Ohm
+R_SENSE = 470 # Ohm
+SENSE_MAG = 25 # V/V
 
 DSUB_GND_PIN = 9
 FPC_SPARE_CONDUCTOR = 42

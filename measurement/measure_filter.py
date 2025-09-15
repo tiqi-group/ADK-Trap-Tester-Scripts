@@ -4,14 +4,14 @@ import dwfpy as dwf
 import numpy as np
 from scipy import signal
 from scipy.optimize import curve_fit
-from utils import *
+from trap_tester.utils import *
 import pandas as pd
 import matplotlib.pyplot as plt
 
 """-----------------------------------------------------------------------"""
 
-N_DSUB = 1
-file_prefix="dev_connector"
+N_DSUB = 2
+file_prefix="bla"
 
 dsub_idx = np.arange(1, 51, 1)
 invalid_pins_lst = [DSUB_GND_PIN, FPC_SPARE_CONDUCTOR]
@@ -103,7 +103,9 @@ with dwf.Device() as device:
     I_ss_baseline = np.mean(i_to_trap[-100:]) # current drive at high output (avg over 100 samples)
 
     df_list = []
-    for k in range(N_DSUB):
+    k = 0
+    while k in range(N_DSUB):
+        df_list_i = []
         for pin in dsub_pins:
 
             # set DAC channel
@@ -139,6 +141,7 @@ with dwf.Device() as device:
                         print("Fishy stuff, probably high impedance short")
                         dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : -1, 'Bandwidth' : -1, 'Perr_max' : -1}
                         df_list.append(dict_res)
+                        k += 1
                         continue
                 else:
                     print("nominal")
@@ -209,16 +212,25 @@ with dwf.Device() as device:
             bandwidth = 1 / (C_est_mean * R_est_mean * 2 * np.pi)
             Perr_max_param = np.max(Perr[:4]) # only include R and C values, ignore offset and final value
             dict_res = {'DSUB connector' : k, 'DSUB pin' : pin ,'Shorted' : False ,'C_filter_nF' : C_est_mean*1e9, 'R_filter_Ohm' : R_est_mean, 'Bandwidth' : bandwidth, 'Perr_max' : Perr_max_param}
-            df_list.append(dict_res)
+            df_list_i.append(dict_res)
             print(f"DSUB connector' : {k}, Pin {pin}, C_filter_est: {C_est_mean:.3}, R_filter_est{R_est_mean:.3}, bandwidth: {bandwidth:.3}, Perr max: {Perr_max_param:.3}")
-
-        # style points for blinking LED
+        
+        # ask user to retake measurement
+        _uin = input(f"Retake measurement? [y/n]")
+        if _uin != "n":
+            continue
+        # only if measurement series was ok add to result dict
+        for dict in df_list_i:
+            df_list.append(dict)
+        
+        # style points for blinking LED while asking the user to switch connector
         if(k + 1 < N_DSUB):
             thread_blink=threading.Thread(target=blink_user_led, args=(io, 0.5))
             thread_blink.start()
             _ = input(f"Switch to DSUB Connector {k+1} and press Enter to continue")
             thread_blink.do_run = False
             thread_blink.join()
+        k += 1
 
     df = pd.DataFrame(df_list, columns=['DSUB connector', 'DSUB pin','Shorted','C_filter_nF','R_filter_Ohm','Bandwidth', 'Perr_max'])
     timestr = t.strftime("%Y%m%d-%H%M%S")

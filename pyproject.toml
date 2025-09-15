@@ -1,8 +1,9 @@
 [tool.poetry]
-name = "data analysis venv"
+name = "TrapTester"
+description = "bla"
 version = "0.1.0"
 authors = ["Michael Marti <micmarti@ethz.ch>"]
-package-mode = false
+packages = [{ include = "trap_tester", from = "src" }]
 
 [tool.poetry.dependencies]
 python = "^3.11"
