@@ -45,6 +45,7 @@ with dwf.Device() as device:
             continue
 
         # set ADC and DAC mux to same channel
+        # essentially looping the waveform back to the ADC
         set_adc(io, pin)
         set_dac(io, pin)
 
@@ -73,8 +74,8 @@ with dwf.Device() as device:
         # outputs should be identical and give correlation close to 1
         corr = np.squeeze(np.max(np.correlate(original, sampled, mode="valid")))
         print(f"Correlation on DSUB pin {i + 1}: {corr}")
-        if corr < 0.98:
-            print(f"Error on DSUB pin {pin}")
+        if corr < 0.99:
+            print(f"Correlation indicates a faulty connection on pin {i+1}")
         correlation[i] = corr
     # output
     plt.scatter(dsub_pin, correlation)
@@ -86,7 +87,7 @@ with dwf.Device() as device:
     t.sleep(0.1)
 
     # test current measurement
-    # do ground the ADC input
+    # ground the ADC input
     io[SW_ADC_TO_GND_IDX].output_state = True
     # route ADC MUX signal to ADK CH2 (according to BNC adapter)
     io[SW_MEAS_SEL_IDX].output_state = False
@@ -113,7 +114,7 @@ with dwf.Device() as device:
     scope.single(
             sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
     )
-    current_measured = scope[1].get_data()  / 470 / 25 * 1e6 # uA
+    current_measured = scope[1].get_data()  / R_SENSE / SENSE_MAG * 1e6 # uA
     plt.plot(np.array(range(buffer_size)) / f_sample * 1000, current_measured * 1000) #mA
     plt.title("Current measurement")
     plt.xlabel("Time [ms]")
