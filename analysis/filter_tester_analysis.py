@@ -7,8 +7,8 @@ filename = 'CaPe_fb_filter_test_20250911-134541.json'
 df = pd.read_json(path + filename)
 
 C_nominal = 1.0 #nF
-R_nominal = 5100 #Ohm
-rel_tolerance = 0.1
+R_nominal = 2000 #Ohm
+rel_tolerance = 0.25
 min_C_abs = 0.1
 
 filename_result = filename.split('.')[0] + '-result.txt'
