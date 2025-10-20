@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 
 """-----------------------------------------------------------------------"""
 
-N_DSUB = 2
-file_prefix="bla"
+N_DSUB = 1
+file_prefix="interposer-black-con0-reseat1-tester-carrier"
 
 dsub_idx = np.arange(1, 51, 1)
 invalid_pins_lst = [DSUB_GND_PIN, FPC_SPARE_CONDUCTOR]
@@ -46,7 +46,7 @@ with dwf.Device() as device:
     scope = device.analog_input
 
     # settings for measurement and digital filter
-    f_sample = 25e6
+    f_sample = 25e6 / 2.0
     buffer_size = 8192
     f_square = f_sample / (buffer_size * 100)
     amplitude = 1.5
@@ -55,7 +55,7 @@ with dwf.Device() as device:
     cutoff = 2e5  # desired cutoff frequency of the filter, Hz
     normal_cutoff = cutoff / nyq
     b, a = signal.butter(4, normal_cutoff, btype="low", analog=False)
-
+    
     n_avg = 10
     # hack for making it work in PSI 2D array
     # set_adc(io, 25)
@@ -167,6 +167,7 @@ with dwf.Device() as device:
                         print("wut")
                 print(f"R_filter = {R_mean}")
                 dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : R_mean, 'Bandwidth' : -1, 'Perr_max' : -1}
+                df_list_i.append(dict_res)
                 continue # do not perform rest of script in off-nominal cases
 
             #setup trigger on voltage
