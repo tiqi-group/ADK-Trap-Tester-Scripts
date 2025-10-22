@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 
 """-----------------------------------------------------------------------"""
 
-N_DSUB = 1
-file_prefix="interposer-black-con0-reseat1-tester-carrier"
+N_DSUB = 8
+file_prefix="interposer-white-tester-carrier-v4-fiddled"
 
 dsub_idx = np.arange(1, 51, 1)
 invalid_pins_lst = [DSUB_GND_PIN, FPC_SPARE_CONDUCTOR]
@@ -139,7 +139,7 @@ with dwf.Device() as device:
                         half_sample_rate = True
                     else:
                         print("Fishy stuff, probably high impedance short")
-                        dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : -1, 'Bandwidth' : -1, 'Perr_max' : -1}
+                        dict_res = {'DSUB connector' : k, 'DSUB pin' : pin ,'Shorted' : False ,'C_filter_nF' : -1, 'R_filter_Ohm' : -1, 'Bandwidth' : -1, 'Perr_max' : -1}
                         df_list.append(dict_res)
                         k += 1
                         continue
@@ -166,7 +166,7 @@ with dwf.Device() as device:
                     else:
                         print("wut")
                 print(f"R_filter = {R_mean}")
-                dict_res = {'DSUB pin' : pin ,'Shorted' : True ,'C_filter' : -1, 'R_filter' : R_mean, 'Bandwidth' : -1, 'Perr_max' : -1}
+                dict_res = {'DSUB connector' : k, 'DSUB pin' : pin ,'Shorted' : True ,'C_filter_nF' : -1, 'R_filter_Ohm' : R_mean, 'Bandwidth' : -1, 'Perr_max' : -1}
                 df_list_i.append(dict_res)
                 continue # do not perform rest of script in off-nominal cases
 
