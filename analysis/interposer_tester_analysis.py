@@ -5,7 +5,7 @@ from trap_tester.mux_mapping import *
 from PIL import Image, ImageDraw, ImageFont
 
 path = '../measurement/results/'
-filename = 'interposer-black-tester-carrier_filter_test_20251017-104309.json'
+filename = 'interposer-white-tester-carrier-v4-fiddled_filter_test_20251021-171629.json'
 df = pd.read_json(path + filename)
 
 C_nominal = 3.2 #nF, as two 1nF + FPC caps should become shorted together
@@ -15,7 +15,8 @@ min_C_abs = 0.1 # nF
 
 # Was the FPC inserted in the same orientation on both connectors?
 # If yes -> fpc_inverted = True
-fpc_inverted = True
+fpc_inverted = False
+trap = "Sparrow"
 
 ### Load netlist info from filter board and tester carrier
 # Tester Carrier
@@ -29,6 +30,13 @@ with open('./interposer_tester_src/filter_gnd.txt') as file:
     gnd_filter_lst  = [line.rstrip() for line in file]
 with open('./interposer_tester_src/fpc_to_lga.json') as file:
     fpc_to_lga_dict  = json.loads(file.read())
+
+# Trap
+with open('./interposer_tester_src/bondpad_to_lga.json') as file:
+    bondpad_to_lga_dict  = json.loads(file.read())
+
+with open(f'./interposer_tester_src/{trap}_pinout.json') as file:
+    trap_pinout  = json.loads(file.read())
 
 shorts_to_gnd_lst = list(set(gnd_tester_carrier_lst) - set(gnd_filter_lst))
 print(f"Additional shorts introduced by Tester Carrier: {shorts_to_gnd_lst}")
@@ -89,6 +97,30 @@ for vals in tester_carrier_groups_dict.values():
                 points.append(y[k] + np.sin(alpha_j) * radius_arcs)
             draw.line(points, fill="black", width=linewidth)
 
+# plot RF pads for easier debugging
+for bondpad in bondpad_to_lga_dict.keys():
+    if bondpad[:2] == "RF":
+        lga_pad = bondpad_to_lga_dict[bondpad]
+        lga_column = ord(lga_pad[0]) - ord("A")
+        lga_row = int(lga_pad[1:]) - 1
+        center = (lga_column * pitch + x_offset, lga_row * pitch + y_offset)
+        draw.circle(center, radius, fill="black", width = linewidth)
+
+needed_pads = []
+# determine needed pads for trap
+for bondpad in trap_pinout.keys():
+    if bondpad[0] == "R":
+        continue
+    lga_pad = bondpad_to_lga_dict[bondpad]
+    needed_pads.append(lga_pad)
+
+# plot GNDs
+for lga_pad in gnd_filter_lst:
+    # print to image
+    lga_column = ord(lga_pad[0]) - ord("A")
+    lga_row = int(lga_pad[1:]) - 1
+    center = (lga_column * pitch + x_offset, lga_row * pitch + y_offset)
+    draw.circle(center, radius, fill = "blue", width = linewidth)
 
 for lga_pad in gnd_filter_lst:
     # print to image
@@ -122,7 +154,7 @@ with open('results/'+filename_result, 'w') as file:
         if (fpc_inverted):
             fpc_conductor = 52 - fpc_conductor
 
-        fpc_index = str(n_conn * 100 + fpc_conductor)
+        fpc_index = str(int(n_conn * 100 + fpc_conductor))
         lga_pad = fpc_to_lga_dict[fpc_index]
         
         # print to image
@@ -139,6 +171,9 @@ with open('results/'+filename_result, 'w') as file:
             else:
                 file.write(f'Found erroneous short to GND in pad {lga_pad}\n')
                 n_errors+=1
+                draw.circle(center, radius, fill = "red", width = 1)
+                draw.circle(center, radius / 2, fill = "lightblue", width = linewidth)
+
         elif (C_filt < min_C_abs):
             file.write(f'Cap not detected on pin {dsub_pin} / FPC conductor {fpc_conductor} on connector {n_conn}, check connectivity and redo measurement\n')
             draw.circle(center, radius, fill = "black", width = 1)
@@ -156,6 +191,15 @@ with open('results/'+filename_result, 'w') as file:
             file.write(f'Found correct value on LGA pad {lga_pad}\n')
             draw.circle(center, radius, fill = "green", width = 1)
 
+    # mark
+
+    font = ImageFont.load_default(size=radius*2)
+    for lga_pad in needed_pads:
+        lga_column = ord(lga_pad[0]) - ord("A")
+        lga_row = int(lga_pad[1:]) - 1
+        center = (lga_column * pitch + x_offset, lga_row * pitch + y_offset)
+        draw.text(center, "X", anchor="mm", align = "center", fill = "black", font=font)
+
     mirrored = img.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
     img_with_mirrored.paste(img, (0,0))
     img_with_mirrored.paste(mirrored, (img.width,0))
@@ -165,8 +209,7 @@ with open('results/'+filename_result, 'w') as file:
     font = ImageFont.load_default(size=fontsize)
     draw.text((img.width / 2, plot_title_offset), "top view", anchor="md", align = "center", fill = "black", font=font)
     draw.text((3 * img.width / 2, plot_title_offset), "bottom view", anchor="md", align = "center", fill = "black", font=font)
-
-
+    
     img_with_mirrored.save(f'results/{filename.split('.')[0]}.jpg')
 
     file.write(f'Detected correct shorts {n_detected_shorts} of {len(shorts_to_gnd_lst)}\n')
