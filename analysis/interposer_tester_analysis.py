@@ -5,17 +5,17 @@ from trap_tester.mux_mapping import *
 from PIL import Image, ImageDraw, ImageFont
 
 path = '../measurement/results/'
-filename = 'interposer-white-tester-carrier-v4-fiddled_filter_test_20251021-171629.json'
+filename ='ZQ2-T_01-nick-thinks_filter_test_20251031-151846.json'
 df = pd.read_json(path + filename)
 
-C_nominal = 3.2 #nF, as two 1nF + FPC caps should become shorted together
-R_nominal = 2000 #Ohm
-rel_tolerance = 0.3
+C_nominal = 1.4 #nF, as two 1nF + FPC caps should become shorted together
+R_nominal = 1000 #Ohm
+rel_tolerance = 0.4
 min_C_abs = 0.1 # nF
 
 # Was the FPC inserted in the same orientation on both connectors?
 # If yes -> fpc_inverted = True
-fpc_inverted = False
+fpc_inverted = True
 trap = "Sparrow"
 
 ### Load netlist info from filter board and tester carrier

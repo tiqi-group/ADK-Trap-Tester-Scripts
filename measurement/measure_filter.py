@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 """-----------------------------------------------------------------------"""
 
 N_DSUB = 8
-file_prefix="interposer-white-tester-carrier-v4-fiddled"
+file_prefix="ZQ2-T_01-nick-thinks"
 
 dsub_idx = np.arange(1, 51, 1)
 invalid_pins_lst = [DSUB_GND_PIN, FPC_SPARE_CONDUCTOR]
@@ -56,7 +56,7 @@ with dwf.Device() as device:
     normal_cutoff = cutoff / nyq
     b, a = signal.butter(4, normal_cutoff, btype="low", analog=False)
     
-    n_avg = 10
+    n_avg = 4
     # hack for making it work in PSI 2D array
     # set_adc(io, 25)
 
@@ -236,4 +236,5 @@ with dwf.Device() as device:
     df = pd.DataFrame(df_list, columns=['DSUB connector', 'DSUB pin','Shorted','C_filter_nF','R_filter_Ohm','Bandwidth', 'Perr_max'])
     timestr = t.strftime("%Y%m%d-%H%M%S")
     df.to_json(f'results/{file_prefix}_filter_test_{timestr}.json', double_precision=15, indent=1)
+    print(f'{file_prefix}_filter_test_{timestr}.json')
     device.analog_io[0][0].value = False
