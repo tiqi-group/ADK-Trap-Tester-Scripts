@@ -50,6 +50,10 @@ def set_dac(io, dsub_pin):
         io[CS_DAC1_IDX + i].output_state = True
         io[CS_ADC1_IDX + i].output_state = True
 
+def disable_dac(io):
+    for i in range(2):
+        io[EN_DAC1_IDX + i].output_state = 0
+
 
 def set_adc(io, dsub_pin):
     adc_address = dsub_to_adc_address(dsub_pin)
