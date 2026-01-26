@@ -1,4 +1,6 @@
 import time as t
+import json
+from pathlib import Path
 import threading
 import dwfpy as dwf
 import numpy as np
@@ -10,12 +12,37 @@ import matplotlib.pyplot as plt
 
 """-----------------------------------------------------------------------"""
 
-N_DSUB = 8
-file_prefix="ZQ2-T_01-nick-thinks"
+
+N_DSUB = 1
+F_SAMPLE = 25e6 / 4.0
+BUFFER_SIZE = 8192
+F_SQUARE = F_SAMPLE / (BUFFER_SIZE * 10)
+AMPLITUDE = 1.5
+CUTOFF = 2e5  # desired cutoff frequency of the digital filter, Hz
+N_AVG = 5
+
+settings_file = Path("./results/test_filter_test_20260126-165412.json")
+if settings_file.is_file():
+    print("loading settings from file")
+    with settings_file.open("r") as file:
+        loaded_settings = json.load(file)["settings"]
+        N_DSUB = loaded_settings["n_dsub"]
+        F_SAMPLE = loaded_settings["f_sample"]
+        BUFFER_SIZE = loaded_settings["buffer_size"]
+        F_SQUARE = loaded_settings["f_square"]
+        AMPLITUDE = loaded_settings["amplitude"]
+        CUTOFF = loaded_settings["cutoff"]
+        N_AVG = loaded_settings["n_avg"]
+else:
+    print("No such file")
+
+
+file_prefix="test"
 
 dsub_idx = np.arange(1, 51, 1)
 invalid_pins_lst = [DSUB_GND_PIN, FPC_SPARE_CONDUCTOR]
 dsub_pins = list(set(dsub_idx).difference(set(invalid_pins_lst)))
+i_short = AMPLITUDE / R_REF
 
 with dwf.Device() as device:
     # connect to the device
@@ -45,18 +72,11 @@ with dwf.Device() as device:
     wavegen = device.analog_output
     scope = device.analog_input
 
-    # settings for measurement and digital filter
-    f_sample = 25e6 / 2.0
-    buffer_size = 8192
-    f_square = f_sample / (buffer_size * 100)
-    amplitude = 1.5
-    i_short = amplitude / R_REF
-    nyq = 0.5 * f_sample
-    cutoff = 2e5  # desired cutoff frequency of the filter, Hz
-    normal_cutoff = cutoff / nyq
+    # digital filter
+    nyq = 0.5 * F_SAMPLE
+    normal_cutoff = CUTOFF / nyq
     b, a = signal.butter(4, normal_cutoff, btype="low", analog=False)
     
-    n_avg = 4
     # hack for making it work in PSI 2D array
     # set_adc(io, 25)
 
@@ -70,10 +90,10 @@ with dwf.Device() as device:
     scope[1].setup(range=5.0)
     # start waveform generator and playback a rectangular wave
     wavegen[0].setup(
-        frequency=f_square,
+        frequency=F_SQUARE,
         function="square",
-        offset=0.5 * amplitude / GAIN_FRONTEND,
-        amplitude=0.5 * amplitude / GAIN_FRONTEND,
+        offset=0.5 * AMPLITUDE / GAIN_FRONTEND,
+        amplitude=0.5 * AMPLITUDE / GAIN_FRONTEND,
         start=True,
     )
 
@@ -81,23 +101,22 @@ with dwf.Device() as device:
     # the current measurement should even trigger when
     # the output is shorted
     scope.setup_edge_trigger(
-        mode="normal", channel=1, slope="rising", level=0.4, hysteresis=0.01
+        mode="normal", channel=1, slope="rising", level=0.4, hysteresis=0
     )
 
-    # get measuremrnt
     scope.single(
-        sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
+        sample_rate=F_SAMPLE, buffer_size=BUFFER_SIZE, configure=True, start=True
     )
     v_divider = signal.filtfilt(b, a, scope[0].get_data())
     i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / (R_SENSE * SENSE_MAG)  # A
-    timestamp = np.array([i / f_sample for i in range(buffer_size)])   # ms
+    timestamp = np.array([i / F_SAMPLE for i in range(BUFFER_SIZE)])   # ms
 
     i_offset = np.mean(i_to_trap[:100]) # current drive at 0V output (avg over 100 samples)
     i_to_trap_no_offset = i_to_trap - i_offset
 
     # parasitics
     ## numerical integration of current over time
-    C_baseline = np.sum(i_to_trap_no_offset) / f_sample / amplitude # C = Q / V
+    C_baseline = np.sum(i_to_trap_no_offset) / F_SAMPLE / AMPLITUDE # C = Q / V
     # leakage current, measurement noise, etc
     ## ss means steady-state....
     I_ss_baseline = np.mean(i_to_trap[-100:]) # current drive at high output (avg over 100 samples)
@@ -112,7 +131,7 @@ with dwf.Device() as device:
             set_dac(io, pin)
 
             scope.single(
-                sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
+                sample_rate=F_SAMPLE, buffer_size=BUFFER_SIZE, configure=True, start=True
             )
 
             v_divider = signal.filtfilt(b, a, scope[0].get_data())
@@ -123,12 +142,12 @@ with dwf.Device() as device:
             v_end = np.mean(v_divider[-100:])
 
             half_sample_rate = False
-            if (0.98 * amplitude < v_end and v_end < 1.02 * amplitude): # settled v?
+            if (0.98 * AMPLITUDE < v_end and v_end < 1.02 * AMPLITUDE): # settled v?
                 if (i_end > 2 * I_ss_baseline): # look for elevated current
                     # two options here: could be elevated current due to high-impedance short
                     # OR: filter is still charging
                     scope.single(
-                        sample_rate=f_sample / 2, buffer_size=buffer_size, configure=True, start=True
+                        sample_rate=F_SAMPLE / 2, buffer_size=BUFFER_SIZE, configure=True, start=True
                     )
                     _i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / (R_SENSE * SENSE_MAG) # A
                     i_end_new = np.mean(_i_to_trap[-100:])
@@ -149,8 +168,8 @@ with dwf.Device() as device:
                 # see if charging done but filter is shorted to GND
                 # on trap electrode side
                 # R_est
-                R_from_i_end = (amplitude / i_end) - R_REF
-                ratio = v_end / amplitude
+                R_from_i_end = (AMPLITUDE / i_end) - R_REF
+                ratio = v_end / AMPLITUDE
                 R_from_v_end = (ratio / (1 - ratio)) * R_REF
                 R_mean = -1
                 if (np.abs((R_from_i_end / R_from_v_end) -  1) < 0.1): # check if similar estimates
@@ -174,29 +193,29 @@ with dwf.Device() as device:
             scope.setup_edge_trigger(
                     mode="normal", channel=0, slope="rising", level=0.05, hysteresis=0.01
             )
-            C_est = np.zeros((n_avg))
-            R_est = np.zeros((n_avg))
+            C_est = np.zeros((N_AVG))
+            R_est = np.zeros((N_AVG))
             Perr = np.zeros((6))
         
-            for i in range(n_avg):
+            for i in range(N_AVG):
                 # get discharge measurement
                 scope.single(
-                    sample_rate=f_sample, buffer_size=buffer_size, configure=True, start=True
+                    sample_rate=F_SAMPLE, buffer_size=BUFFER_SIZE, configure=True, start=True
                 )
                 v_divider = signal.filtfilt(b, a, scope[0].get_data())
                 i_to_trap = signal.filtfilt(b, a, scope[1].get_data()) / (R_SENSE * SENSE_MAG) # A
                 i_to_trap_no_offset = i_to_trap - i_offset
 
                 C_est_i = (
-                    np.sum(i_to_trap_no_offset) / f_sample / amplitude
+                    np.sum(i_to_trap_no_offset) / F_SAMPLE / AMPLITUDE
                     - C_baseline
                 )
                 if C_est_i < 0:
                     C_est_i = 1e-15
 
-                _t = np.array([k / f_sample for k in range(buffer_size)])   # ms
-                lower = [0.98*C_baseline, 0.98*C_est_i, 10460, 100, _t[0], 0.95*amplitude]
-                upper = [1.02*C_baseline, 1.02*C_est_i, 10500, 10000, _t[-1],1.05*amplitude]
+                _t = np.array([k / F_SAMPLE for k in range(BUFFER_SIZE)])   # ms
+                lower = [0.98*C_baseline, 0.98*C_est_i, 10460, 100, _t[0], 0.95*AMPLITUDE]
+                upper = [1.02*C_baseline, 1.02*C_est_i, 10500, 10000, _t[-1],1.05*AMPLITUDE]
                 popt, pcov = curve_fit(
                     step_double_rc,
                     _t,
@@ -206,7 +225,7 @@ with dwf.Device() as device:
                 C_est[i] = popt[1]
                 R_est[i] = popt[3]
                 perr = np.sqrt(np.diag(pcov))
-                Perr += perr / n_avg
+                Perr += perr / N_AVG
                 #v_fit = step_double_rc(timestamp, popt[0],popt[1],popt[2],popt[3],popt[4],popt[5])
             C_est_mean = np.mean(C_est)
             R_est_mean = np.mean(R_est)
@@ -234,7 +253,24 @@ with dwf.Device() as device:
         k += 1
 
     df = pd.DataFrame(df_list, columns=['DSUB connector', 'DSUB pin','Shorted','C_filter_nF','R_filter_Ohm','Bandwidth', 'Perr_max'])
+    settings_dict = {
+        "n_dsub": N_DSUB,
+        "f_sample": F_SAMPLE,
+        "buffer_size": BUFFER_SIZE,
+        "f_square": F_SQUARE,
+        "amplitude": AMPLITUDE,
+        "cutoff" : CUTOFF,
+        "n_avg" : N_AVG,
+    }
+    data_dict = df.to_dict()
+    combined_data = {
+        "settings" : settings_dict,
+        "data" : data_dict,
+     }
+
     timestr = t.strftime("%Y%m%d-%H%M%S")
-    df.to_json(f'results/{file_prefix}_filter_test_{timestr}.json', double_precision=15, indent=1)
+    with open(f'results/{file_prefix}_filter_test_{timestr}.json', 'w') as f:
+        json.dump(combined_data, f, indent=1)
+
     print(f'{file_prefix}_filter_test_{timestr}.json')
     device.analog_io[0][0].value = False
