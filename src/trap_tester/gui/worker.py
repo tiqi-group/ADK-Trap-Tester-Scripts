@@ -87,6 +87,7 @@ class MeasurementWorker(QThread):
         reporter: QtReporter,
         gate: QtGate,
         force_mock: bool,
+        serial: str | None = None,
     ) -> None:
         super().__init__()
         self._run_fn = run_fn
@@ -94,6 +95,7 @@ class MeasurementWorker(QThread):
         self._reporter = reporter
         self._gate = gate
         self._force_mock = force_mock
+        self._serial = serial
         self._cancel = False
 
     def cancel(self) -> None:
@@ -102,7 +104,7 @@ class MeasurementWorker(QThread):
 
     def run(self) -> None:  # executes on the worker thread
         try:
-            with open_device(force_mock=self._force_mock) as device:
+            with open_device(serial=self._serial, force_mock=self._force_mock) as device:
                 ctx = MeasurementContext(
                     device=device,
                     settings=self._settings,

@@ -73,7 +73,7 @@ class DevicePanel(QWidget):
         self._refresh_btn.setProperty("role", "interactive")
         self._refresh_btn.clicked.connect(self.refresh)
         self._sim_checkbox = QCheckBox("Simulate (no hardware)")
-        self._sim_checkbox.setChecked(True)
+        self._sim_checkbox.setChecked(False)  # show attached devices by default
         self._sim_checkbox.setProperty("role", "interactive")
         self._sim_checkbox.toggled.connect(self.refresh)
 

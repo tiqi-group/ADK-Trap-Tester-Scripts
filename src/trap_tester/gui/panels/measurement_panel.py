@@ -15,7 +15,7 @@ from typing import Any, Callable
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox,
+    QComboBox,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from trap_tester.core import settings as settings_io
+from trap_tester.core.device import enumerate_devices
 from trap_tester.core.measurements import run_filter_measurement
 from trap_tester.core.settings import FilterSettings
 from trap_tester.gui.widgets.code_viewer import CodeViewer
@@ -40,6 +41,23 @@ from trap_tester.gui.worker import MeasurementWorker, QtGate, QtReporter
 
 RESULTS_DIR = Path("results")
 MEASUREMENT_DIR = Path("measurement")
+
+
+def _device_priority(dev: dict[str, Any]) -> int:
+    """Sort key for the device selector: prefer a plain Analog Discovery 3.
+
+    The trap-tester frontend targets the Analog Discovery 2/3, so favour those
+    over the Pro (ADP-series) models when several devices are attached.
+    """
+    name = str(dev.get("name", "")).lower()
+    is_pro = "pro" in name or "adp" in name
+    if "discovery 3" in name and not is_pro:
+        return 0
+    if "discovery 2" in name and not is_pro:
+        return 1
+    if not is_pro:
+        return 2
+    return 3
 
 # Which measurement scripts are wired to a run function (and their settings type).
 _MEASUREMENTS: dict[str, tuple[Callable[..., Any], type]] = {
@@ -142,11 +160,23 @@ class MeasurementPanel(QWidget):
         box_layout = QVBoxLayout(settings_box)
         self._form = SettingsForm(FilterSettings())
         self._form.changed.connect(self._refresh_preview)
-        self._sim_checkbox = QCheckBox("Simulate (no hardware)")
-        self._sim_checkbox.setChecked(True)
-        self._sim_checkbox.setProperty("role", "interactive")
+
+        dev_row = QHBoxLayout()
+        dev_label = QLabel("Device:")
+        dev_label.setProperty("role", "interactive")
+        self._device_combo = QComboBox()
+        self._device_combo.setProperty("role", "interactive")
+        dev_refresh = QPushButton("↻")
+        dev_refresh.setProperty("role", "interactive")
+        dev_refresh.setFixedWidth(32)
+        dev_refresh.clicked.connect(self._populate_devices)
+        dev_row.addWidget(dev_label)
+        dev_row.addWidget(self._device_combo, 1)
+        dev_row.addWidget(dev_refresh)
+
         box_layout.addWidget(self._form)
-        box_layout.addWidget(self._sim_checkbox)
+        box_layout.addLayout(dev_row)
+        self._populate_devices()
 
         preview_box = QGroupBox("Preview — applied waveform + trigger")
         preview_box.setProperty("role", "viewer")
@@ -165,6 +195,18 @@ class MeasurementPanel(QWidget):
         layout.addWidget(terminal_box, 1)
         self._refresh_preview()
         return col
+
+    # ---- devices -----------------------------------------------------------
+    def _populate_devices(self) -> None:
+        """Fill the device selector with attached devices + a simulated option."""
+        self._device_combo.clear()
+        devices = sorted(enumerate_devices(force_mock=False), key=_device_priority)
+        for dev in devices:
+            label = f"{dev.get('name', 'Analog Discovery')} — {dev.get('serial', '?')}"
+            self._device_combo.addItem(label, ("real", dev.get("serial")))
+        self._device_combo.addItem("Simulated device (no hardware)", ("mock", None))
+        # index 0 is the preferred attached device (AD3 first), or simulated if none
+        self._device_combo.setCurrentIndex(0)
 
     # ---- layout ------------------------------------------------------------
     def _toggle_files(self) -> None:
@@ -238,9 +280,10 @@ class MeasurementPanel(QWidget):
         self._gate.confirmRequested.connect(self._prompt.ask_confirm)
         self._gate.continueRequested.connect(self._prompt.ask_continue)
 
+        kind, serial = self._device_combo.currentData() or ("mock", None)
         self._worker = MeasurementWorker(
             self._run_fn, s, self._reporter, self._gate,
-            force_mock=self._sim_checkbox.isChecked(),
+            force_mock=(kind == "mock"), serial=serial,
         )
         self._worker.measurementDone.connect(self._on_done)
         self._worker.measurementFailed.connect(self._on_failed)
@@ -280,7 +323,17 @@ class MeasurementPanel(QWidget):
     def _on_failed(self, tb: str) -> None:
         self._status.setText("Measurement failed.")
         self._terminal.append_line(tb)
-        QMessageBox.critical(self, "Measurement failed", tb)
+        last = tb.strip().splitlines()[-1] if tb.strip() else "Measurement failed."
+        msg = last
+        if "ERC: 3" in tb or "being used by another application" in tb:
+            msg = (
+                "The selected device is in use by another application.\n\n"
+                "Close the WaveForms desktop app (or any program using the "
+                "device), then Refresh and try again — or pick "
+                "'Simulated device (no hardware)' to run without hardware.\n\n"
+                f"{last}"
+            )
+        QMessageBox.critical(self, "Measurement failed", msg)
 
     def _cleanup_worker(self) -> None:
         self._start_btn.setEnabled(self._run_fn is not None)

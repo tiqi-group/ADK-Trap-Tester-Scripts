@@ -283,22 +283,23 @@ def enumerate_devices(force_mock: bool = False) -> list[dict[str, Any]]:
 
 
 @contextmanager
-def open_device(force_mock: bool = False) -> Iterator[Any]:
+def open_device(serial: str | None = None, force_mock: bool = False) -> Iterator[Any]:
     """Yield a device to measure with.
 
-    Opens a real ``dwfpy`` device when one is available; otherwise (or when
-    ``force_mock`` is set, or the SDK/hardware is missing) yields a
-    :class:`MockDevice`.
+    When ``force_mock`` is set, yields a :class:`MockDevice`. Otherwise opens
+    the real ``dwfpy`` device with the given ``serial`` (or the first available
+    one when ``serial`` is None) and lets any open error propagate — a real
+    device that is requested but cannot be opened must NOT be silently replaced
+    by a simulation, or the operator would think a real run happened when it did
+    not. The caller surfaces the error to the user.
     """
-    if not force_mock:
-        try:
-            import dwfpy as dwf
+    if force_mock:
+        with MockDevice() as device:
+            yield device
+        return
 
-            with dwf.Device() as device:
-                yield device
-                return
-        except Exception:
-            pass  # fall through to the mock
+    import dwfpy as dwf
 
-    with MockDevice() as device:
+    kwargs = {"serial_number": serial} if serial else {}
+    with dwf.Device(**kwargs) as device:
         yield device
