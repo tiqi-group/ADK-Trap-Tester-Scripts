@@ -48,8 +48,17 @@ _COLUMNS = [
 ]
 _N_TAIL = 100  # samples averaged for steady-state estimates
 
+# Digital-output configuration defined by this measurement (not user settings).
+# SW_ADC_TO_GND: keep the ADC input floating (set True for e.g. PSI cryo setups).
+ADC_TO_GND = False
+DIGITAL_OUT = {
+    "MEAS SEL (SW_MEAS_SEL)": "current",
+    "ADC → GND (SW_ADC_TO_GND)": "on" if ADC_TO_GND else "off (floating)",
+    "DAC output stage": "enabled — square-wave drive",
+}
 
-def _init_device(device: Any, settings: FilterSettings) -> tuple[Any, Any, Any]:
+
+def _init_device(device: Any) -> tuple[Any, Any, Any]:
     """Power up the frontend, initialise DIO and return (io, wavegen, scope)."""
     device.analog_io[0][1].value = 5.0
     device.analog_io[0][0].value = True
@@ -60,7 +69,7 @@ def _init_device(device: Any, settings: FilterSettings) -> tuple[Any, Any, Any]:
     for i in range(16):
         io[i].setup(enabled=True, state=(i >= 8))
 
-    io[SW_ADC_TO_GND_IDX].output_state = settings.adc_to_gnd
+    io[SW_ADC_TO_GND_IDX].output_state = ADC_TO_GND
     io[SW_MEAS_SEL_IDX].output_state = False  # current measurement
     return io, device.analog_output, device.analog_input
 
@@ -182,7 +191,7 @@ def run_filter_measurement(ctx: MeasurementContext) -> pd.DataFrame:
     into ``results/`` when ``settings.file_prefix`` is set.
     """
     s: FilterSettings = ctx.settings
-    io, wavegen, scope = _init_device(ctx.device, s)
+    io, wavegen, scope = _init_device(ctx.device)
 
     nyq = 0.5 * s.f_sample
     b, a = signal.butter(4, s.cutoff / nyq, btype="low", analog=False)
@@ -231,7 +240,9 @@ def _finalise(results: list[dict[str, Any]], s: FilterSettings, ctx) -> pd.DataF
     ctx.device.analog_io[0][0].value = False  # drop the 5V supply
     if s.file_prefix:
         timestr = t.strftime("%Y%m%d-%H%M%S")
-        path = save_result(df, s, f"results/{s.file_prefix}_filter_test_{timestr}.json")
+        path = save_result(
+            df, s, f"results/{s.file_prefix}_filter_test_{timestr}.json", "measure_filter"
+        )
         ctx.report.log(f"Saved {path}")
         ctx.report.status(f"Done — {len(df)} rows saved to {path.name}")
     return df

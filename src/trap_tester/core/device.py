@@ -20,6 +20,7 @@ from trap_tester.utils import (
     R_REF,
     R_SENSE,
     SENSE_MAG,
+    SW_MEAS_SEL_IDX,
     WR_IDX,
     step_double_rc,
 )
@@ -105,16 +106,33 @@ class _MockScope:
 
     def _generate(self, sample_rate: float, buffer_size: int) -> None:
         n = int(buffer_size)
+        dio = self._device.digital_io
+        rng = np.random.default_rng(int(dio.dac_addr) + 1)
+
+        # SW_MEAS_SEL: True -> voltage measurement, False -> current measurement
+        if dio._state[SW_MEAS_SEL_IDX]:
+            self._generate_voltage(n, rng)
+        else:
+            self._generate_current(n, sample_rate, rng)
+
+    def _generate_voltage(self, n: int, rng: np.random.Generator) -> None:
+        """Voltage-meter mode: a per-pin quasi-DC voltage on both channels."""
+        v0 = rng.uniform(-0.5, 2.5)
+        v = v0 + rng.normal(0, 5e-3, size=n)
+        self._channels[0]._data = v.copy()
+        self._channels[1]._data = v
+
+    def _generate_current(
+        self, n: int, sample_rate: float, rng: np.random.Generator
+    ) -> None:
+        """Current-measurement mode (filter + resistance): double-RC step."""
         t = np.arange(n) / sample_rate
         t_start = t[min(_STEP_SAMPLE, n - 1)]
 
         wg = self._device.analog_output.channel
         v_end = GAIN_FRONTEND * (wg["offset"] + wg["amplitude"]) or 1.5
 
-        dio = self._device.digital_io
-        connected = dio.dac_connected
-        # deterministic per-pin variation so plots/results differ across pins
-        rng = np.random.default_rng(int(dio.dac_addr) + 1)
+        connected = self._device.digital_io.dac_connected
         if connected:
             c_filt = _C_FILT_NOM * (1 + rng.uniform(-0.15, 0.15))
             r_filt = _R_FILT_NOM * (1 + rng.uniform(-0.2, 0.2))
@@ -123,15 +141,13 @@ class _MockScope:
             r_filt = _R_FILT_NOM
         c_tot = _C_PAR + c_filt
 
-        # voltage at the DAC-MUX node: the analytical double-RC step response
+        # Settle just below V_end (open circuit at DC) so the resistance
+        # voltage-divider estimate stays a clean, large finite value rather than
+        # diverging at ratio == 1; still well within the filter "settled" band.
+        v_asymptote = v_end * 0.999
         v = step_double_rc(
-            t.copy(),
-            _C_PAR,
-            max(c_filt, 1e-15),
-            _R_AFE,
-            max(r_filt, 1.0),
-            t_start,
-            v_end,
+            t.copy(), _C_PAR, max(c_filt, 1e-15), _R_AFE, max(r_filt, 1.0),
+            t_start, v_asymptote,
         )
         v = v + rng.normal(0, 1e-3, size=n)
 

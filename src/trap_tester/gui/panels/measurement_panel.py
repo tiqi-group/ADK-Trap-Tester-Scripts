@@ -16,6 +16,7 @@ from typing import Any, Callable
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QFormLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -29,12 +30,25 @@ from PySide6.QtWidgets import (
 
 from trap_tester.core import settings as settings_io
 from trap_tester.core.device import enumerate_devices
-from trap_tester.core.measurements import run_filter_measurement
-from trap_tester.core.settings import FilterSettings
+from trap_tester.core.measurements import (
+    digital_out_for,
+    run_filter_measurement,
+    run_resistance_measurement,
+    run_voltage_measurement,
+)
+from trap_tester.core.settings import (
+    FilterSettings,
+    ResistanceSettings,
+    VoltageSettings,
+)
 from trap_tester.gui.widgets.code_viewer import CodeViewer
 from trap_tester.gui.widgets.file_browser import FileBrowser
 from trap_tester.gui.widgets.prompt_bar import PromptBar
-from trap_tester.gui.widgets.scope_canvas import ScopeCanvas, WaveformPreview
+from trap_tester.gui.widgets.scope_canvas import (
+    ScopeCanvas,
+    WaveformPreview,
+    channels_for,
+)
 from trap_tester.gui.widgets.settings_form import SettingsForm
 from trap_tester.gui.widgets.terminal_output import TerminalOutput
 from trap_tester.gui.worker import MeasurementWorker, QtGate, QtReporter
@@ -59,9 +73,11 @@ def _device_priority(dev: dict[str, Any]) -> int:
         return 2
     return 3
 
-# Which measurement scripts are wired to a run function (and their settings type).
+# Measurement key (== script stem) -> (run function, settings dataclass).
 _MEASUREMENTS: dict[str, tuple[Callable[..., Any], type]] = {
-    "measure_filter.py": (run_filter_measurement, FilterSettings),
+    "measure_filter": (run_filter_measurement, FilterSettings),
+    "measure_voltage": (run_voltage_measurement, VoltageSettings),
+    "measure_resistance": (run_resistance_measurement, ResistanceSettings),
 }
 
 
@@ -155,9 +171,10 @@ class MeasurementPanel(QWidget):
         col.setMinimumWidth(260)
         layout = QVBoxLayout(col)
 
-        settings_box = QGroupBox("Settings — measure_filter")
-        settings_box.setProperty("role", "interactive")
-        box_layout = QVBoxLayout(settings_box)
+        self._settings_box = QGroupBox("Settings — measure_filter")
+        self._settings_box.setProperty("role", "interactive")
+        self._settings_box_layout = QVBoxLayout(self._settings_box)
+        self._settings_type: type = FilterSettings
         self._form = SettingsForm(FilterSettings())
         self._form.changed.connect(self._refresh_preview)
 
@@ -174,13 +191,19 @@ class MeasurementPanel(QWidget):
         dev_row.addWidget(self._device_combo, 1)
         dev_row.addWidget(dev_refresh)
 
-        box_layout.addWidget(self._form)
-        box_layout.addLayout(dev_row)
+        self._settings_box_layout.addWidget(self._form)
+        self._settings_box_layout.addLayout(dev_row)
         self._populate_devices()
 
-        preview_box = QGroupBox("Preview — applied waveform + trigger")
-        preview_box.setProperty("role", "viewer")
-        pv = QVBoxLayout(preview_box)
+        # read-only digital-output configuration (defined by the measurement)
+        self._digital_out_box = QGroupBox("Digital out (measurement-defined)")
+        self._digital_out_box.setProperty("role", "viewer")
+        self._digital_out_form = QFormLayout(self._digital_out_box)
+        self._update_digital_out("measure_filter")
+
+        self._preview_box = QGroupBox("Preview — applied waveform + trigger")
+        self._preview_box.setProperty("role", "viewer")
+        pv = QVBoxLayout(self._preview_box)
         self._preview = WaveformPreview()
         pv.addWidget(self._preview)
 
@@ -190,11 +213,21 @@ class MeasurementPanel(QWidget):
         self._terminal = TerminalOutput()
         tv.addWidget(self._terminal)
 
-        layout.addWidget(settings_box)
-        layout.addWidget(preview_box)
+        layout.addWidget(self._settings_box)
+        layout.addWidget(self._digital_out_box)
+        layout.addWidget(self._preview_box)
         layout.addWidget(terminal_box, 1)
         self._refresh_preview()
         return col
+
+    def _update_digital_out(self, key: str) -> None:
+        """Show the measurement's read-only digital-output configuration."""
+        while self._digital_out_form.rowCount():
+            self._digital_out_form.removeRow(0)
+        for label, value in digital_out_for(key).items():
+            value_label = QLabel(value)
+            value_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            self._digital_out_form.addRow(f"{label}:", value_label)
 
     # ---- devices -----------------------------------------------------------
     def _populate_devices(self) -> None:
@@ -216,16 +249,41 @@ class MeasurementPanel(QWidget):
 
     # ---- measurement selection / source view ------------------------------
     def _choose_measurement(self, path: str) -> None:
-        name = Path(path).name
-        entry = _MEASUREMENTS.get(name)
+        key = Path(path).stem
+        entry = _MEASUREMENTS.get(key)
         if entry is None:
             self._run_fn = None
             self._start_btn.setEnabled(False)
-            self._status.setText(f"{name} is not available yet (milestone 1: measure_filter).")
+            self._status.setText(f"{Path(path).name} is not available yet.")
             return
-        self._run_fn = entry[0]
+        run_fn, settings_type = entry
+        self._run_fn = run_fn
+        self._apply_settings_type(settings_type, key)
         self._start_btn.setEnabled(self._worker is None)
-        self._status.setText(f"Selected {name}. Adjust settings and press Start.")
+        self._status.setText(f"Selected {key}. Adjust settings and press Start.")
+
+    def _apply_settings_type(
+        self, settings_type: type, key: str, settings: Any = None
+    ) -> None:
+        """Rebuild the settings form for a measurement (and optionally fill it)."""
+        if settings_type is not self._settings_type:
+            self._rebuild_form(settings_type)
+            self._settings_box.setTitle(f"Settings — {key}")
+        self._scope.set_channels(*channels_for(key))  # measurement-aware plots
+        self._update_digital_out(key)
+        if settings is not None:
+            self._form.set_settings(settings)
+        self._refresh_preview()
+
+    def _rebuild_form(self, settings_type: type) -> None:
+        self._form.changed.disconnect(self._refresh_preview)
+        self._settings_box_layout.removeWidget(self._form)
+        self._form.setParent(None)  # remove from view immediately, not just the layout
+        self._form.deleteLater()
+        self._form = SettingsForm(settings_type())
+        self._form.changed.connect(self._refresh_preview)
+        self._settings_box_layout.insertWidget(0, self._form)
+        self._settings_type = settings_type
 
     def _show_definition_code(self, path: str) -> None:
         self._choose_measurement(path)
@@ -242,11 +300,17 @@ class MeasurementPanel(QWidget):
     # ---- settings load / preview ------------------------------------------
     def _load_settings_file(self, path: str) -> None:
         try:
-            settings, _ = settings_io.load(path)
+            measurement, settings, _ = settings_io.load(path)
         except Exception as exc:  # noqa: BLE001
             QMessageBox.warning(self, "Load failed", f"Could not load settings:\n{exc}")
             return
-        self._form.set_settings(settings)
+        entry = _MEASUREMENTS.get(measurement or "")
+        if entry is not None:
+            self._run_fn = entry[0]
+            self._apply_settings_type(entry[1], measurement, settings)
+            self._start_btn.setEnabled(self._worker is None)
+        else:
+            self._form.set_settings(settings)
         self._terminal.append_line(f"Loaded settings from {Path(path).name}")
 
     def _refresh_preview(self) -> None:
@@ -254,7 +318,16 @@ class MeasurementPanel(QWidget):
             s = self._form.get_settings()
         except (ValueError, TypeError):
             return  # mid-edit; ignore until fields are valid
-        self._preview.update_preview(s.f_square, s.amplitude)
+        # only measurements that drive an excitation waveform have a preview
+        amplitude = getattr(s, "amplitude", None)
+        f_square = getattr(s, "f_square", None)
+        if f_square is None and hasattr(s, "f_sample") and hasattr(s, "buffer_size"):
+            f_square = s.f_sample / (s.buffer_size * 10)  # derived (e.g. resistance)
+        if amplitude is None or f_square is None:
+            self._preview_box.setVisible(False)
+            return
+        self._preview.update_preview(f_square, amplitude)
+        self._preview_box.setVisible(True)
 
     # ---- run / stop --------------------------------------------------------
     def _start(self) -> None:
@@ -310,10 +383,9 @@ class MeasurementPanel(QWidget):
 
     # ---- worker callbacks --------------------------------------------------
     def _on_result(self, row: dict[str, Any]) -> None:
-        self._terminal.append_line(
-            f"  → pin {row['DSUB pin']}: "
-            f"{'SHORT' if row['Shorted'] else f'C={row['C_filter_nF']:.3f} nF'}"
-        )
+        # each measurement already logs a detailed per-pin line to the terminal;
+        # this hook is kept for future per-result UI (e.g. a live results table).
+        pass
 
     def _on_done(self, df: Any) -> None:
         self._status.setText(f"Done — {len(df)} rows.")

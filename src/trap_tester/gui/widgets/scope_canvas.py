@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -10,6 +12,34 @@ from PySide6.QtWidgets import QVBoxLayout, QWidget
 from trap_tester.utils import R_SENSE, SENSE_MAG
 
 _TITLE_KW = dict(fontsize=10, fontweight="bold", color="#b83a20")
+_CURRENT_MA_PER_RAW = 1e3 / (R_SENSE * SENSE_MAG)  # raw sense volts -> mA
+
+
+@dataclass(frozen=True)
+class ChannelSpec:
+    """How to display one scope channel for a given measurement."""
+
+    name: str  # short channel name, e.g. "Voltage" / "Current"
+    unit: str  # display unit, e.g. "V" / "mA"
+    scale: float  # display value = raw * scale
+    color: str
+
+
+_VOLT_A = ChannelSpec("Voltage", "V", 1.0, "#1f77b4")
+_VOLT_B = ChannelSpec("Measured V", "V", 1.0, "#d62728")
+_CURRENT = ChannelSpec("Current", "mA", _CURRENT_MA_PER_RAW, "#d62728")
+
+# per-measurement channel semantics (scope[0], scope[1])
+CHANNELS: dict[str, tuple[ChannelSpec, ChannelSpec]] = {
+    "measure_filter": (_VOLT_A, _CURRENT),
+    "measure_resistance": (_VOLT_A, _CURRENT),
+    "measure_voltage": (ChannelSpec("DAC-MUX V", "V", 1.0, "#1f77b4"), _VOLT_B),
+}
+
+
+def channels_for(measurement: str | None) -> tuple[ChannelSpec, ChannelSpec]:
+    """Channel specs for a measurement key (filter's voltage/current default)."""
+    return CHANNELS.get(measurement or "", CHANNELS["measure_filter"])
 
 
 class _MplCanvas(FigureCanvasQTAgg):
@@ -20,11 +50,12 @@ class _MplCanvas(FigureCanvasQTAgg):
 
 
 class ScopeCanvas(QWidget):
-    """Two stacked plots (scope[0] voltage, scope[1] current).
+    """Two stacked plots for scope[0] and scope[1].
 
-    Mirrors the mock's Ch1/Ch2 "Capture" + "Measurement (auto-detect)" regions;
-    the auto-detected summary is shown as each plot's title rather than a box,
-    leaving the plot area as large as possible.
+    Measurement-aware: :meth:`set_channels` configures what each channel means
+    (label, unit, scale) so e.g. the current channel shows mA for the filter /
+    resistance measurements but a plain voltage for the voltage meter. The
+    auto-detected summary is the plot title, keeping the plot area large.
     """
 
     def __init__(self) -> None:
@@ -39,16 +70,24 @@ class ScopeCanvas(QWidget):
 
         layout.addWidget(self.canvas_ch1, 1)
         layout.addWidget(self.canvas_ch2, 1)
+
+        self._spec_a, self._spec_b = CHANNELS["measure_filter"]
+        self._init_axes()
+
+    def set_channels(self, spec_a: ChannelSpec, spec_b: ChannelSpec) -> None:
+        """Set the channel semantics for the current measurement and redraw axes."""
+        self._spec_a, self._spec_b = spec_a, spec_b
         self._init_axes()
 
     def _init_axes(self) -> None:
-        for canvas, title, ylabel in (
-            (self.canvas_ch1, "Ch1 · Voltage (auto-detect): —", "Voltage [V]"),
-            (self.canvas_ch2, "Ch2 · Current (auto-detect): —", "Current [mA]"),
+        for canvas, ch, spec in (
+            (self.canvas_ch1, "Ch1", self._spec_a),
+            (self.canvas_ch2, "Ch2", self._spec_b),
         ):
-            canvas.ax.set_title(title, **_TITLE_KW)
+            canvas.ax.clear()
+            canvas.ax.set_title(f"{ch} · {spec.name} (auto-detect): —", **_TITLE_KW)
             canvas.ax.set_xlabel("Time [ms]")
-            canvas.ax.set_ylabel(ylabel)
+            canvas.ax.set_ylabel(f"{spec.name} [{spec.unit}]")
             canvas.ax.grid(True, alpha=0.3)
             canvas.draw_idle()
 
@@ -56,31 +95,24 @@ class ScopeCanvas(QWidget):
         ch_a = np.asarray(ch_a, dtype=float)
         ch_b = np.asarray(ch_b, dtype=float)
         t_ms = np.arange(ch_a.size) / sample_rate * 1e3
-        current = ch_b / (R_SENSE * SENSE_MAG)  # A
+        self._draw(self.canvas_ch1, "Ch1", self._spec_a, t_ms, ch_a)
+        self._draw(self.canvas_ch2, "Ch2", self._spec_b, t_ms, ch_b)
 
-        v_end = float(np.mean(ch_a[-100:])) if ch_a.size >= 100 else float(np.mean(ch_a))
-        i_peak = float(np.max(current))
-        i_end = float(np.mean(current[-100:])) if current.size >= 100 else float(np.mean(current))
-
-        self.canvas_ch1.ax.clear()
-        self.canvas_ch1.ax.plot(t_ms, ch_a, color="#1f77b4", lw=0.8)
-        self.canvas_ch1.ax.set(xlabel="Time [ms]", ylabel="Voltage [V]")
-        self.canvas_ch1.ax.set_title(
-            f"Ch1 · Voltage (auto-detect): settled {v_end:.3f} V", **_TITLE_KW
-        )
-        self.canvas_ch1.ax.grid(True, alpha=0.3)
-        self.canvas_ch1.draw_idle()
-
-        self.canvas_ch2.ax.clear()
-        self.canvas_ch2.ax.plot(t_ms, current * 1e3, color="#d62728", lw=0.8)
-        self.canvas_ch2.ax.set(xlabel="Time [ms]", ylabel="Current [mA]")
-        self.canvas_ch2.ax.set_title(
-            f"Ch2 · Current (auto-detect): peak {i_peak * 1e3:.3f} mA, "
-            f"end {i_end * 1e6:.1f} µA",
+    @staticmethod
+    def _draw(canvas: _MplCanvas, ch: str, spec: ChannelSpec, t_ms: np.ndarray, raw: np.ndarray) -> None:
+        data = raw * spec.scale
+        settled = float(np.mean(data[-100:])) if data.size >= 100 else float(np.mean(data))
+        peak = float(np.max(np.abs(data))) if data.size else 0.0
+        canvas.ax.clear()
+        canvas.ax.plot(t_ms, data, color=spec.color, lw=0.8)
+        canvas.ax.set(xlabel="Time [ms]", ylabel=f"{spec.name} [{spec.unit}]")
+        canvas.ax.set_title(
+            f"{ch} · {spec.name} (auto-detect): settled {settled:.3f} {spec.unit}, "
+            f"peak {peak:.3f} {spec.unit}",
             **_TITLE_KW,
         )
-        self.canvas_ch2.ax.grid(True, alpha=0.3)
-        self.canvas_ch2.draw_idle()
+        canvas.ax.grid(True, alpha=0.3)
+        canvas.draw_idle()
 
 
 class WaveformPreview(QWidget):
