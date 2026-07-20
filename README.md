@@ -5,7 +5,7 @@ This repository contains the scripts for performing measurements using the [Anal
 ## Dependencies
 
 * Python 3.11 or higher
-* [Poetry](https://python-poetry.org/) for Python dependency management
+* [uv](https://docs.astral.sh/uv/) for Python dependency management
 * [Waveform SDK](https://digilent.com/reference/software/waveforms/waveforms-sdk/start) from Digilent. The "Getting Started Guide" can be found [here](https://digilent.com/reference/software/waveforms/waveforms-3/getting-started-guide) which links the installer.
 * git
 
@@ -16,8 +16,21 @@ If the dependencies are met, the python package for easily interfacing the Analo
 ```bash
 git clone git@gitlab.phys.ethz.ch:tiqi-projects/tiqi-trap-tester/trap-tester-adk-script.git && \
 cd trap-tester-adk-script && \
-poetry install 
+uv sync
 ```
+
+## GUI
+
+A cross-platform (Linux / macOS / Windows) GUI wraps the measurement, analysis,
+self-test and device-info workflows:
+
+```bash
+uv run trap-tester-gui      # or: uv run python -m trap_tester.gui
+```
+
+The GUI runs without hardware attached — tick **Simulate (no hardware)** in the
+Measurement panel to drive the flow against a synthetic device. The reusable,
+GUI-agnostic measurement engine lives in `src/trap_tester/core/`.
 
 ## Repository Structure
 

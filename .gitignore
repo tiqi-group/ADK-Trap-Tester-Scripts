@@ -1,2 +1,6 @@
 .venv
 *__pycache__*
+docs_tmp
+
+CLAUDE.md
+RESUME.md

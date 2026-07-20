@@ -1,0 +1,89 @@
+/* Trap Tester palette: interactive elements green, viewers red. */
+
+QWidget {
+    font-size: 12px;
+}
+
+#menuBar {
+    background: #3f6fb0;
+}
+
+QPushButton[role="menu"] {
+    background: transparent;
+    color: white;
+    border: none;
+    padding: 6px 14px;
+    font-size: 14px;
+}
+QPushButton[role="menu"]:checked {
+    background: #2c5286;
+    border-radius: 4px;
+}
+QPushButton[role="menu"]:hover {
+    background: #4a7cc0;
+    border-radius: 4px;
+}
+
+/* Interactive controls — green */
+QPushButton[role="interactive"] {
+    background: #6cb46c;
+    color: #10250f;
+    border: 1px solid #4f954f;
+    border-radius: 4px;
+    padding: 5px 10px;
+}
+QPushButton[role="interactive"]:hover { background: #7cc47c; }
+QPushButton[role="interactive"]:disabled { background: #b9d4b9; color: #6a806a; }
+
+QGroupBox[role="interactive"] {
+    border: 2px solid #6cb46c;
+    border-radius: 6px;
+    margin-top: 8px;
+    background: rgba(108, 180, 108, 0.08);
+}
+QGroupBox[role="interactive"]::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    color: #3d7a3d;
+    font-weight: bold;
+}
+
+QListWidget[role="interactive"],
+QLineEdit[role="interactive"] {
+    border: 1px solid #6cb46c;
+    border-radius: 3px;
+    background: white;
+}
+QLabel[role="interactive"] { color: #3d7a3d; font-weight: bold; }
+
+/* Viewers — red */
+QGroupBox[role="viewer"] {
+    border: 2px solid #e0492f;
+    border-radius: 6px;
+    margin-top: 8px;
+}
+QGroupBox[role="viewer"]::title {
+    subcontrol-origin: margin;
+    left: 8px;
+    color: #b83a20;
+    font-weight: bold;
+}
+QLabel[role="viewer"] {
+    border: 2px solid #e0492f;
+    border-radius: 4px;
+    background: rgba(224, 73, 47, 0.08);
+    color: #b83a20;
+    padding: 6px;
+    font-weight: bold;
+}
+QPlainTextEdit[role="viewer"] {
+    border: 2px solid #e0492f;
+    border-radius: 4px;
+    background: #1e1e1e;
+    color: #e6e6e6;
+    font-family: monospace;
+}
+FigureCanvasQTAgg[role="viewer"] {
+    border: 2px solid #e0492f;
+    border-radius: 4px;
+}
