@@ -230,19 +230,56 @@ class MockDevice:
 # --------------------------------------------------------------------------- #
 # Real / mock selection
 # --------------------------------------------------------------------------- #
-def enumerate_devices() -> list[dict[str, Any]]:
-    """List attached Analog Discovery devices (empty if none / no SDK)."""
+def _mock_device_list() -> list[dict[str, Any]]:
+    """Two fake devices so the Device Info panel can be demoed without hardware."""
+    return [
+        {
+            "index": 0, "name": "Analog Discovery 3", "type": "Analog Discovery 3",
+            "serial": "SN:210415A1B2C3", "id": "3", "revision": "C", "simulated": True,
+        },
+        {
+            "index": 1, "name": "Analog Discovery 2", "type": "Analog Discovery 2",
+            "serial": "SN:210244D4E5F6", "id": "2", "revision": "B", "simulated": True,
+        },
+    ]
+
+
+def enumerate_devices(force_mock: bool = False) -> list[dict[str, Any]]:
+    """List attached Analog Discovery devices.
+
+    Returns one dict per device with whatever identifying fields are readable
+    (``name``, ``serial``, ``id``, ``revision``, ``type``). Returns a simulated
+    list when ``force_mock`` is set; an empty list when the SDK is missing or no
+    device is attached.
+    """
+    if force_mock:
+        return _mock_device_list()
     try:
         import dwfpy as dwf
     except Exception:
         return []
     try:
-        return [
-            {"serial": d.serial_number, "type": str(d.device_type), "name": d.name}
-            for d in dwf.Device.enumerate()
-        ]
+        devices = dwf.Device.enumerate()
     except Exception:
         return []
+
+    out: list[dict[str, Any]] = []
+    for i, dev in enumerate(devices):
+        info: dict[str, Any] = {"index": i}
+        for key, attr in (
+            ("name", "name"),
+            ("serial", "serial_number"),
+            ("id", "id"),
+            ("revision", "revision"),
+            ("user_name", "user_name"),
+        ):
+            try:
+                info[key] = str(getattr(dev, attr))
+            except Exception:
+                pass
+        info.setdefault("type", info.get("name", "Analog Discovery"))
+        out.append(info)
+    return out
 
 
 @contextmanager

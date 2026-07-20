@@ -15,13 +15,14 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from trap_tester.gui.panels.device_panel import DevicePanel
 from trap_tester.gui.panels.measurement_panel import MeasurementPanel
 from trap_tester.gui.panels.placeholder import PlaceholderPanel
 
 _PANELS = [
     ("Measurement", None),
     ("Analysis", "Analyse a saved measurement and generate a report. (Milestone 2)"),
-    ("Device Info", "Inspect attached Analog Discovery devices. (Milestone 3)"),
+    ("Device Info", None),
     ("Self-Test", "Verify the WaveForms install and the analog frontend. (Milestone 4)"),
 ]
 
@@ -42,10 +43,12 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._build_menu_bar())
         layout.addWidget(self._stack, 1)
 
-        # Measurement is the only live panel in milestone 1.
-        self._stack.addWidget(MeasurementPanel())
-        for name, note in _PANELS[1:]:
-            self._stack.addWidget(PlaceholderPanel(name, note or ""))
+        # Live panels; the rest are placeholders for later milestones.
+        live = {"Measurement": MeasurementPanel, "Device Info": DevicePanel}
+        for name, note in _PANELS:
+            factory = live.get(name)
+            widget = factory() if factory else PlaceholderPanel(name, note or "")
+            self._stack.addWidget(widget)
 
         self._select(0)
 
