@@ -10,9 +10,7 @@ toggled so a host panel can refresh its summary.
 
 from __future__ import annotations
 
-from matplotlib.lines import Line2D
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QVBoxLayout
 
 from trap_tester.core.layout import (
     ANNOTATION_STATES,
@@ -27,7 +25,7 @@ from trap_tester.core.layout.annotation import (
     GND_FILL,
     GND_STROKE,
 )
-from trap_tester.gui.widgets.layout_canvas import LayoutCanvas
+from trap_tester.gui.widgets.layout_canvas import LayoutCanvas, LegendItem
 
 _EMPTY_MSG = "Select an interface to start marking channels."
 
@@ -38,20 +36,16 @@ class AnnotationView(LayoutCanvas):
     changed = Signal()  # emitted after a click toggles a mark
 
     def __init__(self) -> None:
-        super().__init__()
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.canvas, 1)
-
+        super().__init__()  # builds the canvas layout (title + canvas + legend)
         self._annset = AnnotationSet()
         self._layout: InterfaceLayout | None = None
-        self.canvas.mpl_connect("button_press_event", self._on_click)
         self.clear(_EMPTY_MSG)
 
     # ---- context / data ----------------------------------------------------
     def set_layout(self, layout: InterfaceLayout) -> None:
         """Show ``layout`` whole (every connector) and re-project current marks."""
         self._layout = layout
+        self.fit_on_next_draw()  # a new interface fits; marking keeps the zoom
         self._redraw()
 
     def set_annotations(self, annotations: AnnotationSet) -> None:
@@ -74,9 +68,8 @@ class AnnotationView(LayoutCanvas):
         self.show_drawing(build_annotation_drawing(self._layout, self._annset))
 
     # ---- interaction -------------------------------------------------------
-    def _on_click(self, event) -> None:
-        if event.button != 1:  # left click only
-            return
+    def _on_canvas_click(self, event) -> None:
+        # a left-click that wasn't a pan (LayoutCanvas distinguishes them)
         pin = self._pin_at(event)
         if pin is None or pin.channel is None:  # GND / shield / empty space
             return
@@ -92,21 +85,15 @@ class AnnotationView(LayoutCanvas):
         susp = sum(p.status == "suspicious" for p in drawing.pins)
         return f"{drawing.title} — {faulty} faulty, {susp} suspicious"
 
-    def _legend(self, drawing: Drawing) -> list[Line2D]:
+    def _legend(self, drawing: Drawing) -> list[LegendItem]:
         present = {p.status for p in drawing.pins}
-        handles: list[Line2D] = []
-        for status, (label, color) in ANNOTATION_STATES.items():
-            if status in present:
-                handles.append(Line2D([], [], marker="o", ls="", color=color,
-                                      label=label, markersize=7))
+        items: list[LegendItem] = [
+            (label, color, "#333")
+            for status, (label, color) in ANNOTATION_STATES.items()
+            if status in present
+        ]
         if "clear" in present:
-            handles.append(Line2D([], [], marker="o", ls="", label="No data",
-                                  markerfacecolor=CLEAR_FILL,
-                                  markeredgecolor=CLEAR_STROKE, color="none",
-                                  markersize=7))
+            items.append(("No data", CLEAR_FILL, CLEAR_STROKE))
         if "unmapped" in present:
-            handles.append(Line2D([], [], marker="o", ls="", label="GND / shield",
-                                  markerfacecolor=GND_FILL,
-                                  markeredgecolor=GND_STROKE, color="none",
-                                  markersize=7))
-        return handles + self._flavor_legend(drawing)
+            items.append(("GND / shield", GND_FILL, GND_STROKE))
+        return items + self._flavor_legend(drawing)

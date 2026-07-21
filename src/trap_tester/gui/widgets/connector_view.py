@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from matplotlib.lines import Line2D
 from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
@@ -18,7 +17,6 @@ from PySide6.QtWidgets import (
     QLabel,
     QMessageBox,
     QPushButton,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -36,7 +34,7 @@ from trap_tester.core.layout import (
     user_layouts_dir,
 )
 from trap_tester.core.layout.interface import UNMEASURED_FILL, UNMEASURED_STROKE
-from trap_tester.gui.widgets.layout_canvas import LayoutCanvas
+from trap_tester.gui.widgets.layout_canvas import LayoutCanvas, LegendItem
 
 
 class ConnectorView(LayoutCanvas):
@@ -47,13 +45,9 @@ class ConnectorView(LayoutCanvas):
         self._result: AnalysisResult | None = None
         self._connectors: list[int] = []
 
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-
-        # A single compact controls row split into two divisions so it steals as
-        # little height from the plot as possible: the connector selector on the
-        # left, the layout selector + Import on the right. Neither combo stretches
-        # to full width.
+        # A single compact controls row split into two divisions: the connector
+        # selector on the left, the layout selector + Import on the right. It is
+        # added to LayoutCanvas's controls bar (above the title).
         controls = QWidget()
         controls_l = QHBoxLayout(controls)
         controls_l.setContentsMargins(0, 0, 0, 0)
@@ -88,9 +82,7 @@ class ConnectorView(LayoutCanvas):
         self._import_btn.clicked.connect(self._import_layout)
         controls_l.addWidget(self._import_btn)
 
-        layout.addWidget(controls)
-        layout.addWidget(self.canvas, 1)
-
+        self.add_control(controls)  # into LayoutCanvas's controls bar
         self._refresh_layouts()
         self.clear()
 
@@ -125,6 +117,7 @@ class ConnectorView(LayoutCanvas):
         """
         if self._result is None:
             return
+        self.fit_on_next_draw()  # a new result / connector / layout fits to view
         builtin = self._is_builtin()
         self._conn_row.setVisible(builtin and len(self._connectors) > 1)
         data = self._conn_selector.currentData()
@@ -150,19 +143,15 @@ class ConnectorView(LayoutCanvas):
         faults = [p for p in measured if p.status != "ok"]
         return f"{drawing.title} — {len(faults)} fault(s) / {len(measured)} pins"
 
-    def _legend(self, drawing: Drawing) -> list[Line2D]:
+    def _legend(self, drawing: Drawing) -> list[LegendItem]:
         present = {p.status for p in drawing.pins}
-        handles: list[Line2D] = []
-        for status, (label, color) in STATUS_INFO.items():
-            if status in present:
-                handles.append(Line2D([], [], marker="o", ls="", color=color,
-                                      label=label, markersize=7))
+        items: list[LegendItem] = [
+            (label, color, "#333")
+            for status, (label, color) in STATUS_INFO.items() if status in present
+        ]
         if "unmeasured" in present:
-            handles.append(Line2D([], [], marker="o", ls="", label="No data",
-                                  markerfacecolor=UNMEASURED_FILL,
-                                  markeredgecolor=UNMEASURED_STROKE, color="none",
-                                  markersize=7))
-        return handles + self._flavor_legend(drawing)
+            items.append(("No data", UNMEASURED_FILL, UNMEASURED_STROKE))
+        return items + self._flavor_legend(drawing)
 
     # ---- layout selection / import -----------------------------------------
     def _selected_layout(self, connector: int) -> InterfaceLayout | None:
