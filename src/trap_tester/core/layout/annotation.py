@@ -219,7 +219,7 @@ def build_annotation_drawing(
                     x=slot.x, y=slot.y, r=slot.r, shape=slot.shape,
                     connector=conn, pin=slot.pin, status=state,
                     fill=color, stroke="#333", label=slot.display_label,
-                    message=message, measured=True, channel=channel,
+                    message=message, measured=True, channel=channel, rot=slot.rot,
                 )
             )
         else:
@@ -237,7 +237,7 @@ def build_annotation_drawing(
                     fill=GND_FILL if unmapped else CLEAR_FILL,
                     stroke=GND_STROKE if unmapped else CLEAR_STROKE,
                     label=slot.display_label,
-                    message=message, measured=False, channel=channel,
+                    message=message, measured=False, channel=channel, rot=slot.rot,
                 )
             )
     return Drawing(title=layout.name, background=list(layout.background), pins=pins)

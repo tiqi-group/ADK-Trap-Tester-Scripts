@@ -164,6 +164,7 @@ class PinMark:
     message: str  # full finding text, shown on hover
     measured: bool
     channel: int | None = None  # canonical channel; lets a click resolve identity
+    rot: float = 0.0  # degrees; orients an elongated "finger" shape
 
 
 @dataclass
@@ -230,7 +231,7 @@ def build_drawing(result: AnalysisResult, layout: InterfaceLayout) -> Drawing:
                     connector=slot.connector, pin=slot.pin,
                     status=f.status, fill=color, stroke="#333",
                     label=slot.display_label, message=f.message, measured=True,
-                    channel=slot.channel,
+                    channel=slot.channel, rot=slot.rot,
                 )
             )
         else:
@@ -241,7 +242,7 @@ def build_drawing(result: AnalysisResult, layout: InterfaceLayout) -> Drawing:
                     status="unmeasured", fill=UNMEASURED_FILL,
                     stroke=UNMEASURED_STROKE, label=slot.display_label,
                     message=f"Pin {slot.pin}: not measured", measured=False,
-                    channel=slot.channel,
+                    channel=slot.channel, rot=slot.rot,
                 )
             )
 

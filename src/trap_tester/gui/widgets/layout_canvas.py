@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from trap_tester.core.layout.interface import PinMark
 
 TITLE_KW = dict(fontsize=10, fontweight="bold", color="#b83a20")
+_FINGER_ASPECT = 0.32  # width / length of an elongated "finger" pad
 
 
 def text_color_for(fill: str) -> str:
@@ -159,7 +160,15 @@ class LayoutCanvas(QWidget):
 
     def _draw_pin(self, pin: PinMark) -> None:
         ax = self.ax
-        if pin.shape == "rect":
+        if pin.shape == "finger":
+            # an elongated pad oriented by ``rot`` (e.g. a bond finger)
+            length, width = 2 * pin.r, 2 * pin.r * _FINGER_ASPECT
+            patch = MplRect(
+                (pin.x - length / 2, pin.y - width / 2), length, width,
+                facecolor=pin.fill, edgecolor=pin.stroke, lw=0.5, zorder=3)
+            patch.set_transform(
+                Affine2D().rotate_deg_around(pin.x, pin.y, pin.rot) + ax.transData)
+        elif pin.shape == "rect":
             patch = MplRect(
                 (pin.x - pin.r, pin.y - pin.r), 2 * pin.r, 2 * pin.r,
                 facecolor=pin.fill, edgecolor=pin.stroke, lw=1.1, zorder=3)
@@ -167,8 +176,9 @@ class LayoutCanvas(QWidget):
             patch = MplCircle((pin.x, pin.y), pin.r, facecolor=pin.fill,
                               edgecolor=pin.stroke, lw=1.1, zorder=3)
         ax.add_patch(patch)
-        ax.text(pin.x, pin.y, pin.label, fontsize=5.5, ha="center", va="center",
-                color=text_color_for(pin.fill), zorder=4)
+        if pin.label:
+            ax.text(pin.x, pin.y, pin.label, fontsize=5.5, ha="center", va="center",
+                    color=text_color_for(pin.fill), zorder=4)
 
     # ---- hit-test + hover --------------------------------------------------
     def _pin_at(self, event) -> PinMark | None:
