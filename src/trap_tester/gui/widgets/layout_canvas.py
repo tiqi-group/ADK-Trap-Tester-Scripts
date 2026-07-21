@@ -135,6 +135,17 @@ class LayoutCanvas(QWidget):
         self._controls_layout.addWidget(widget)
         self._controls_bar.setVisible(True)
 
+    def save_view(self, path: str) -> None:
+        """Save the view exactly as shown (title, legend, plot, current zoom/pan).
+
+        The title and legend are Qt widgets rather than figure artists, so grab
+        the whole widget as a pixmap instead of using ``fig.savefig`` (which
+        would capture only the bare axes). Format is inferred from the suffix.
+        """
+        self.canvas.draw()  # flush any pending draw_idle before grabbing
+        if not self.grab().save(path):
+            raise OSError(f"could not write image to {path}")
+
     # ---- public API --------------------------------------------------------
     def clear(self, message: str) -> None:
         self._pins = []

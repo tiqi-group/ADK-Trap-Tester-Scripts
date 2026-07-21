@@ -59,6 +59,16 @@ class AnalysisView(QWidget):
         self._result: AnalysisResult | None = None
         self.clear()
 
+    def save_view(self, path: str) -> None:
+        """Save the plot exactly as shown (current axes/limits) to an image file.
+
+        Grabs the canvas as a pixmap so the export matches the on-screen view;
+        the format is inferred from the file suffix.
+        """
+        self.canvas.draw()  # flush any pending draw_idle before grabbing
+        if not self.canvas.grab().save(path):
+            raise OSError(f"could not write image to {path}")
+
     def clear(self, message: str = "Run an analysis to see the result.") -> None:
         self._result = None
         self._conn_row.setVisible(False)

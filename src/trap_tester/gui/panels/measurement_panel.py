@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 )
 
 from trap_tester.core import settings as settings_io
+from trap_tester.core import measurements as _core_measurements
 from trap_tester.core.device import enumerate_devices
 from trap_tester.core.measurements import (
     digital_out_for,
@@ -54,7 +55,8 @@ from trap_tester.gui.widgets.terminal_output import TerminalOutput
 from trap_tester.gui.worker import MeasurementWorker, QtGate, QtReporter
 
 RESULTS_DIR = Path("results")
-MEASUREMENT_DIR = Path("measurement")
+# The core module that implements each measurement (shown in the source viewer).
+_CORE_MEAS_DIR = Path(_core_measurements.__file__).parent
 
 
 def _device_priority(dev: dict[str, Any]) -> int:
@@ -73,11 +75,26 @@ def _device_priority(dev: dict[str, Any]) -> int:
         return 2
     return 3
 
-# Measurement key (== script stem) -> (run function, settings dataclass).
+# Measurement key -> (run function, settings dataclass).
 _MEASUREMENTS: dict[str, tuple[Callable[..., Any], type]] = {
     "measure_filter": (run_filter_measurement, FilterSettings),
     "measure_voltage": (run_voltage_measurement, VoltageSettings),
     "measure_resistance": (run_resistance_measurement, ResistanceSettings),
+}
+
+# Friendly name shown to the operator instead of the internal key / filename.
+_DISPLAY_NAME: dict[str, str] = {
+    "measure_filter": "Measure RC",
+    "measure_resistance": "Measure DC Resistance",
+    "measure_voltage": "Voltage meter",
+}
+
+# Definition-list order, and the core module implementing each measurement.
+_DEFINITION_ORDER = ("measure_filter", "measure_resistance", "measure_voltage")
+_SOURCE_FILE: dict[str, Path] = {
+    "measure_filter": _CORE_MEAS_DIR / "filter.py",
+    "measure_resistance": _CORE_MEAS_DIR / "resistance.py",
+    "measure_voltage": _CORE_MEAS_DIR / "voltage.py",
 }
 
 
@@ -108,7 +125,8 @@ class MeasurementPanel(QWidget):
     def _build_left(self) -> QWidget:
         col = QSplitter(Qt.Vertical)
         self._definition_browser = FileBrowser(
-            "Measurement Definition", MEASUREMENT_DIR, pattern="*.py"
+            "Measurement Definition",
+            entries=[(_DISPLAY_NAME[k], k) for k in _DEFINITION_ORDER],
         )
         self._result_browser = FileBrowser("Measurement Result", RESULTS_DIR)
         # single click chooses the measurement; double click views the source
@@ -173,7 +191,7 @@ class MeasurementPanel(QWidget):
         col.setMinimumWidth(260)
         layout = QVBoxLayout(col)
 
-        self._settings_box = QGroupBox("Settings — measure_filter")
+        self._settings_box = QGroupBox(f"Settings — {_DISPLAY_NAME['measure_filter']}")
         self._settings_box.setProperty("role", "interactive")
         self._settings_box_layout = QVBoxLayout(self._settings_box)
         self._settings_type: type = FilterSettings
@@ -250,19 +268,20 @@ class MeasurementPanel(QWidget):
         self._toggle_files_btn.setText("❮ Hide files" if show else "❯ Show files")
 
     # ---- measurement selection / source view ------------------------------
-    def _choose_measurement(self, path: str) -> None:
-        key = Path(path).stem
+    def _choose_measurement(self, key: str) -> None:
         entry = _MEASUREMENTS.get(key)
         if entry is None:
             self._run_fn = None
             self._start_btn.setEnabled(False)
-            self._status.setText(f"{Path(path).name} is not available yet.")
+            self._status.setText(f"{key} is not available yet.")
             return
         run_fn, settings_type = entry
         self._run_fn = run_fn
         self._apply_settings_type(settings_type, key)
         self._start_btn.setEnabled(self._worker is None)
-        self._status.setText(f"Selected {key}. Adjust settings and press Start.")
+        self._status.setText(
+            f"Selected {_DISPLAY_NAME.get(key, key)}. Adjust settings and press Start."
+        )
 
     def _apply_settings_type(
         self, settings_type: type, key: str, settings: Any = None
@@ -270,7 +289,7 @@ class MeasurementPanel(QWidget):
         """Rebuild the settings form for a measurement (and optionally fill it)."""
         if settings_type is not self._settings_type:
             self._rebuild_form(settings_type)
-            self._settings_box.setTitle(f"Settings — {key}")
+            self._settings_box.setTitle(f"Settings — {_DISPLAY_NAME.get(key, key)}")
         self._scope.set_channels(*channels_for(key))  # measurement-aware plots
         self._update_digital_out(key)
         if settings is not None:
@@ -287,9 +306,12 @@ class MeasurementPanel(QWidget):
         self._settings_box_layout.insertWidget(0, self._form)
         self._settings_type = settings_type
 
-    def _show_definition_code(self, path: str) -> None:
-        self._choose_measurement(path)
-        self._code_viewer.show_file(path, kind="Definition")
+    def _show_definition_code(self, key: str) -> None:
+        self._choose_measurement(key)
+        source = _SOURCE_FILE.get(key)
+        if source is None:
+            return
+        self._code_viewer.show_file(str(source), kind="Definition")
         self._center_stack.setCurrentWidget(self._code_viewer)
 
     def _show_result_json(self, path: str) -> None:

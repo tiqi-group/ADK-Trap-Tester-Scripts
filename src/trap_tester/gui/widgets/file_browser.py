@@ -1,4 +1,9 @@
-"""A titled list of files in a directory, with a refresh button."""
+"""A titled list, with a refresh button.
+
+Lists the files in a directory (``directory`` + ``pattern``), or, when
+``entries`` is given, a fixed set of ``(label, data)`` rows — used for the
+measurement-definition list, which shows friendly names rather than filenames.
+"""
 
 from __future__ import annotations
 
@@ -19,10 +24,17 @@ class FileBrowser(QWidget):
     selected = Signal(str)  # single click — choose
     opened = Signal(str)  # double click / Enter — open
 
-    def __init__(self, title: str, directory: str | Path, pattern: str = "*.json") -> None:
+    def __init__(
+        self,
+        title: str,
+        directory: str | Path | None = None,
+        pattern: str = "*.json",
+        entries: list[tuple[str, str]] | None = None,
+    ) -> None:
         super().__init__()
-        self._dir = Path(directory)
+        self._dir = Path(directory) if directory is not None else None
         self._pattern = pattern
+        self._entries = entries
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -46,7 +58,13 @@ class FileBrowser(QWidget):
 
     def refresh(self) -> None:
         self._list.clear()
-        if not self._dir.exists():
+        if self._entries is not None:
+            for label, data in self._entries:
+                item = QListWidgetItem(label)
+                item.setData(256, data)  # Qt.UserRole == 256
+                self._list.addItem(item)
+            return
+        if self._dir is None or not self._dir.exists():
             return
         for path in sorted(self._dir.glob(self._pattern), reverse=True):
             item = QListWidgetItem(path.name)

@@ -141,6 +141,15 @@ class InterfacesPanel(QWidget):
         box = QGroupBox("Interface visualiser")
         box.setProperty("role", "viewer")
         v = QVBoxLayout(box)
+
+        top = QHBoxLayout()
+        top.addStretch(1)
+        self._save_view_btn = QPushButton("Save view…")
+        self._save_view_btn.setProperty("role", "interactive")
+        self._save_view_btn.clicked.connect(self._save_view)
+        top.addWidget(self._save_view_btn)
+        v.addLayout(top)
+
         self._view = AnnotationView()
         self._view.changed.connect(self._update_summary)
         v.addWidget(self._view)
@@ -248,6 +257,27 @@ class InterfacesPanel(QWidget):
             self, "Clear all", "Remove every mark? This cannot be undone."
         ) == QMessageBox.Yes:
             self._view.clear_annotations()
+
+    def _save_view(self) -> None:
+        """Export the interface visualiser exactly as shown to a PNG image."""
+        name = self._iface_selector.currentText() or "interface"
+        default = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        token = self._iface_selector.currentData()
+        if isinstance(token, str) and token.startswith("builtin:"):
+            default += f"-conn{self._conn_spin.value()}"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save view", f"{default}.png", "PNG image (*.png)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        try:
+            self._view.save_view(path)
+        except Exception as exc:  # noqa: BLE001 — surface any render/IO failure
+            QMessageBox.warning(self, "Save failed", f"Could not save image:\n{exc}")
+            return
+        self._summary.setText(self._summary.text() + f"\nView saved to {Path(path).name}.")
 
     def _update_summary(self) -> None:
         counts = self._view.annotations().counts()

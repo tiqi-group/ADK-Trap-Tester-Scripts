@@ -16,6 +16,7 @@ from typing import Any
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QComboBox,
+    QFileDialog,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -112,6 +113,11 @@ class AnalysisPanel(QWidget):
         self._viz_selector.currentIndexChanged.connect(self._on_view_changed)
         selector_row.addWidget(self._viz_selector)
         selector_row.addStretch(1)
+        self._save_view_btn = QPushButton("Save view…")
+        self._save_view_btn.setProperty("role", "interactive")
+        self._save_view_btn.setEnabled(False)
+        self._save_view_btn.clicked.connect(self._save_view)
+        selector_row.addWidget(self._save_view_btn)
         vv.addLayout(selector_row)
 
         self._viz_stack = QStackedWidget()
@@ -156,6 +162,7 @@ class AnalysisPanel(QWidget):
         self._clear_views()
         self._result = None
         self._save_btn.setEnabled(False)
+        self._save_view_btn.setEnabled(False)
 
         if df is None or df.empty:
             self._set_no_analysis(f"{self._source.name} contains no data rows.")
@@ -212,10 +219,30 @@ class AnalysisPanel(QWidget):
         self._report.clear()
         self._report.appendPlainText(analysis_engine.render_report(result, source_name))
         self._save_btn.setEnabled(True)
+        self._save_view_btn.setEnabled(True)
         self._status.setText(
             f"Analysed {source_name}: {result.n_faults} fault(s) "
             f"in {len(result.findings)} pins."
         )
+
+    def _save_view(self) -> None:
+        """Export the currently visible visualiser (map or scatter) as an image."""
+        view = self._viz_stack.currentWidget()
+        tag = "map" if self._viz_stack.currentIndex() == 0 else "scatter"
+        stem = self._source.stem if self._source else "analysis"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save view", f"{stem}-{tag}.png", "PNG image (*.png)"
+        )
+        if not path:
+            return
+        if not path.lower().endswith(".png"):
+            path += ".png"
+        try:
+            view.save_view(path)
+        except Exception as exc:  # noqa: BLE001 — surface any render/IO failure
+            QMessageBox.warning(self, "Save failed", f"Could not save image:\n{exc}")
+            return
+        self._status.setText(f"View saved to {Path(path).name}.")
 
     def _save_report(self) -> None:
         if self._result is None or self._source is None:
