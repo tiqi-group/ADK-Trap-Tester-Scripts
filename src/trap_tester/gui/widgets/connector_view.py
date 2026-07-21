@@ -28,7 +28,6 @@ from trap_tester.core.layout import (
     InterfaceLayout,
     build_drawing,
     dsub50_layout_for_connector,
-    filter_layout_connector,
     fpc_layout_for_connector,
     import_layout,
     layout_for,
@@ -46,6 +45,7 @@ class ConnectorView(LayoutCanvas):
     def __init__(self) -> None:
         super().__init__()
         self._result: AnalysisResult | None = None
+        self._connectors: list[int] = []
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -100,36 +100,49 @@ class ConnectorView(LayoutCanvas):
         super().clear(message)
 
     def show_result(self, result: AnalysisResult) -> None:
-        """Paint ``result``; if it spans several connectors, offer a selector."""
+        """Paint ``result`` on the selected layout."""
         if layout_for(result.measurement) is None:
             self.clear(f"No connector map for '{result.measurement}'.")
             return
         self._result = result
-        connectors = sorted({int(f.connector) for f in result.findings})
+        self._connectors = sorted({int(f.connector) for f in result.findings})
 
         self._conn_selector.blockSignals(True)
         self._conn_selector.clear()
-        for c in connectors:
+        for c in self._connectors:
             self._conn_selector.addItem(f"{c}", c)
         self._conn_selector.setCurrentIndex(0)
         self._conn_selector.blockSignals(False)
-        self._conn_row.setVisible(len(connectors) > 1)
+        self._refresh_view()
 
-        self._render_connector(connectors[0] if connectors else 1)
+    def _refresh_view(self) -> None:
+        """Render the current (result, layout, connector) selection.
 
-    def _on_connector_changed(self, index: int) -> None:
-        if index < 0 or self._result is None:
-            return
-        self._render_connector(int(self._conn_selector.itemData(index)))
-
-    def _render_connector(self, connector: int) -> None:
+        The connector picker only applies to the single-connector built-ins; a
+        custom layout carries its own connectors and is drawn *whole* (like the
+        Interfaces panel), so unmeasured pads on every connector still show as
+        "No data" and the picker is hidden.
+        """
         if self._result is None:
             return
+        builtin = self._is_builtin()
+        self._conn_row.setVisible(builtin and len(self._connectors) > 1)
+        data = self._conn_selector.currentData()
+        connector = int(data) if data is not None else 0
         layout = self._selected_layout(connector)
         if layout is None:
             self.clear(f"No connector map for '{self._result.measurement}'.")
             return
         self.show_drawing(build_drawing(self._result, layout))
+
+    def _on_connector_changed(self, index: int) -> None:
+        if index < 0 or self._result is None:
+            return
+        self._refresh_view()
+
+    def _is_builtin(self) -> bool:
+        token = self._layout_selector.currentData()
+        return isinstance(token, str) and token.startswith("builtin:")
 
     # ---- title / legend (LayoutCanvas hooks) -------------------------------
     def _title(self, drawing: Drawing) -> str:
@@ -145,11 +158,11 @@ class ConnectorView(LayoutCanvas):
                 handles.append(Line2D([], [], marker="o", ls="", color=color,
                                       label=label, markersize=7))
         if "unmeasured" in present:
-            handles.append(Line2D([], [], marker="o", ls="", label="Unmeasured",
+            handles.append(Line2D([], [], marker="o", ls="", label="No data",
                                   markerfacecolor=UNMEASURED_FILL,
                                   markeredgecolor=UNMEASURED_STROKE, color="none",
                                   markersize=7))
-        return handles
+        return handles + self._flavor_legend(drawing)
 
     # ---- layout selection / import -----------------------------------------
     def _selected_layout(self, connector: int) -> InterfaceLayout | None:
@@ -166,7 +179,9 @@ class ConnectorView(LayoutCanvas):
         if token == "builtin:fpc":
             return fpc_layout_for_connector(connector)
         try:
-            return filter_layout_connector(load_layout(Path(token)), connector)
+            # Custom layouts are drawn whole (all their connectors), so a
+            # multi-connector interposer looks the same here as in Interfaces.
+            return load_layout(Path(token))
         except Exception as exc:  # noqa: BLE001 — a deleted/corrupt custom file
             QMessageBox.warning(
                 self, "Layout unavailable",
@@ -197,8 +212,7 @@ class ConnectorView(LayoutCanvas):
     def _on_layout_changed(self, index: int) -> None:
         if index < 0 or self._result is None:
             return
-        connector = self._conn_selector.currentData()
-        self._render_connector(int(connector) if connector is not None else 1)
+        self._refresh_view()
 
     def _import_layout(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

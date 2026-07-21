@@ -34,7 +34,7 @@ _ROWS = (
 _X_MAX = 16.0        # (17 pins - 1) * PITCH — used for the mirror transform
 
 
-def generate_dsub50(connector: int = 1, front_view: bool = True) -> InterfaceLayout:
+def generate_dsub50(connector: int = 0, front_view: bool = True) -> InterfaceLayout:
     """Build the :class:`InterfaceLayout` for one DSUB-50 connector."""
     slots: list[Slot] = []
     top_y = (len(_ROWS) - 1) * ROW_DY

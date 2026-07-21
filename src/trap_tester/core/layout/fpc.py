@@ -40,7 +40,7 @@ def fpc_conductors() -> list[int]:
     return list(range(1, FPC_N_CONDUCTORS + 1))
 
 
-def generate_fpc(connector: int = 1) -> InterfaceLayout:
+def generate_fpc(connector: int = 0) -> InterfaceLayout:
     """Build the :class:`InterfaceLayout` for one FPC ribbon."""
     conductors = fpc_conductors()
     slots = [

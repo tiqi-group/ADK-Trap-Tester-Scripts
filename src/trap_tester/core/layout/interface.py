@@ -73,6 +73,12 @@ class Slot:
     rot: float = 0.0
     shape: str = "circle"  # circle | rect
     channel: int | None = None  # canonical mux signal; None = unmapped
+    label: str | None = None  # in-shape text; None -> str(pin). "" hides it.
+
+    @property
+    def display_label(self) -> str:
+        """Text drawn inside the shape (the pin number unless overridden)."""
+        return self.label if self.label is not None else str(self.pin)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -84,11 +90,13 @@ class Slot:
             "rot": self.rot,
             "shape": self.shape,
             "channel": self.channel,
+            "label": self.label,
         }
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Slot:
         raw_channel = data.get("channel")
+        raw_label = data.get("label")
         return cls(
             connector=int(data["connector"]),
             pin=int(data["pin"]),
@@ -98,6 +106,7 @@ class Slot:
             rot=float(data.get("rot", 0.0)),
             shape=str(data.get("shape", "circle")),
             channel=None if raw_channel is None else int(raw_channel),
+            label=None if raw_label is None else str(raw_label),
         )
 
 
@@ -214,13 +223,14 @@ def build_drawing(result: AnalysisResult, layout: InterfaceLayout) -> Drawing:
     for slot in layout.slots:
         f = by_key.get((slot.connector, slot.pin))
         if f is not None:
-            label, color = STATUS_INFO.get(f.status, (f.status, "#000"))
+            _label, color = STATUS_INFO.get(f.status, (f.status, "#000"))
             pins.append(
                 PinMark(
                     x=slot.x, y=slot.y, r=slot.r, shape=slot.shape,
                     connector=slot.connector, pin=slot.pin,
                     status=f.status, fill=color, stroke="#333",
-                    label=str(slot.pin), message=f.message, measured=True,
+                    label=slot.display_label, message=f.message, measured=True,
+                    channel=slot.channel,
                 )
             )
         else:
@@ -229,8 +239,9 @@ def build_drawing(result: AnalysisResult, layout: InterfaceLayout) -> Drawing:
                     x=slot.x, y=slot.y, r=slot.r, shape=slot.shape,
                     connector=slot.connector, pin=slot.pin,
                     status="unmeasured", fill=UNMEASURED_FILL,
-                    stroke=UNMEASURED_STROKE, label=str(slot.pin),
+                    stroke=UNMEASURED_STROKE, label=slot.display_label,
                     message=f"Pin {slot.pin}: not measured", measured=False,
+                    channel=slot.channel,
                 )
             )
 

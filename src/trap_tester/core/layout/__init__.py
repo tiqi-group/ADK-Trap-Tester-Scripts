@@ -22,6 +22,7 @@ from trap_tester.core.layout.annotation import (
     cycle_state,
 )
 from trap_tester.core.layout.dsub50 import default_json_path, generate_dsub50
+from trap_tester.core.layout.flavor import FLAVOR_INFO, flavor_style
 from trap_tester.core.layout.fpc import default_json_path as fpc_json_path
 from trap_tester.core.layout.fpc import generate_fpc
 from trap_tester.core.layout.interface import (
@@ -53,7 +54,7 @@ _CACHE: dict[str, InterfaceLayout] = {}
 def dsub50_layout() -> InterfaceLayout:
     """The DSUB-50 template, loaded from JSON if it exists else generated.
 
-    This is the geometric source of truth (connector 1). Other connectors reuse
+    This is the geometric source of truth (connector 0). Other connectors reuse
     this geometry via :func:`dsub50_layout_for_connector`.
     """
     if "dsub50" not in _CACHE:
@@ -123,7 +124,7 @@ def has_layout(measurement: str | None) -> bool:
     return (measurement or "") in _LAYOUTS
 
 
-def layout_for(measurement: str | None, connector: int = 1) -> InterfaceLayout | None:
+def layout_for(measurement: str | None, connector: int = 0) -> InterfaceLayout | None:
     factory = _LAYOUTS.get(measurement or "")
     return factory(connector) if factory else None
 
@@ -184,4 +185,6 @@ __all__ = [
     "AnnotationSet",
     "build_annotation_drawing",
     "cycle_state",
+    "FLAVOR_INFO",
+    "flavor_style",
 ]

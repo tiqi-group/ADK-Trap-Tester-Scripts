@@ -34,7 +34,6 @@ from PySide6.QtWidgets import (
 from trap_tester.core.layout import (
     AnnotationSet,
     dsub50_layout_for_connector,
-    filter_layout_connector,
     fpc_layout_for_connector,
     import_layout,
     load_layout,
@@ -98,7 +97,7 @@ class InterfacesPanel(QWidget):
         conn_row.addWidget(QLabel("Connector:"))
         self._conn_spin = QSpinBox()
         self._conn_spin.setProperty("role", "interactive")
-        self._conn_spin.setRange(1, 99)
+        self._conn_spin.setRange(0, 99)  # DSUB connectors are 0-indexed
         self._conn_spin.valueChanged.connect(self._update_view)
         conn_row.addWidget(self._conn_spin)
         conn_row.addStretch(1)
@@ -162,13 +161,14 @@ class InterfacesPanel(QWidget):
 
     def _current_layout(self):
         token = self._iface_selector.currentData()
-        connector = self._conn_spin.value()
         if token == "builtin:dsub50":
-            return dsub50_layout_for_connector(connector)
+            return dsub50_layout_for_connector(self._conn_spin.value())
         if token == "builtin:fpc":
-            return fpc_layout_for_connector(connector)
+            return fpc_layout_for_connector(self._conn_spin.value())
         try:
-            return filter_layout_connector(load_layout(Path(token)), connector)
+            # Custom layouts are shown whole — they may span several connectors
+            # (e.g. an interposer over 8 DSUB connectors).
+            return load_layout(Path(token))
         except Exception as exc:  # noqa: BLE001 — deleted / corrupt custom file
             QMessageBox.warning(
                 self, "Interface unavailable",
@@ -176,11 +176,15 @@ class InterfacesPanel(QWidget):
                 "Falling back to the built-in DSUB-50.",
             )
             self._iface_selector.setCurrentIndex(0)
-            return dsub50_layout_for_connector(connector)
+            return dsub50_layout_for_connector(self._conn_spin.value())
 
     def _update_view(self) -> None:
-        layout = self._current_layout()
-        self._view.set_context(layout, self._conn_spin.value())
+        token = self._iface_selector.currentData()
+        # The connector picker only applies to the single-connector built-ins;
+        # custom layouts carry their own connectors and are drawn whole.
+        is_builtin = isinstance(token, str) and token.startswith("builtin:")
+        self._conn_spin.setEnabled(is_builtin)
+        self._view.set_layout(self._current_layout())
         self._update_summary()
 
     def _import_layout(self) -> None:

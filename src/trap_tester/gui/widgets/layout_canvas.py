@@ -14,6 +14,7 @@ from typing import TYPE_CHECKING
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
+from matplotlib.lines import Line2D
 from matplotlib.patches import Circle as MplCircle
 from matplotlib.patches import Polygon as MplPolygon
 from matplotlib.patches import Rectangle as MplRect
@@ -21,10 +22,9 @@ from matplotlib.transforms import Affine2D
 from PySide6.QtWidgets import QSizePolicy, QWidget
 
 from trap_tester.core.layout import Circle, Drawing, Line, Polyline, Rect, Text
+from trap_tester.core.layout.flavor import FLAVOR_INFO
 
 if TYPE_CHECKING:
-    from matplotlib.lines import Line2D
-
     from trap_tester.core.layout.interface import PinMark
 
 TITLE_KW = dict(fontsize=10, fontweight="bold", color="#b83a20")
@@ -100,6 +100,21 @@ class LayoutCanvas(QWidget):
 
     def _legend(self, drawing: Drawing) -> list[Line2D]:
         return []
+
+    def _flavor_legend(self, drawing: Drawing) -> list[Line2D]:
+        """Legend handles for the fixed-colour flavor pads in the background.
+
+        Flavor pads (GND / axialisation / …) are static background circles, so we
+        recover which classes are present by matching their fill colour against
+        :data:`FLAVOR_INFO`. Shared by every layout view so all tabs agree.
+        """
+        fills = {p.fill for p in drawing.background if isinstance(p, Circle)}
+        return [
+            Line2D([], [], marker="o", ls="", label=label, color="none",
+                   markerfacecolor=fill, markeredgecolor=stroke, markersize=7)
+            for label, fill, stroke in FLAVOR_INFO.values()
+            if fill in fills
+        ]
 
     # ---- drawing helpers ---------------------------------------------------
     def _make_annot(self) -> None:

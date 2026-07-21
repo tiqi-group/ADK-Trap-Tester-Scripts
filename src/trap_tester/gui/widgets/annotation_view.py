@@ -21,7 +21,12 @@ from trap_tester.core.layout import (
     InterfaceLayout,
     build_annotation_drawing,
 )
-from trap_tester.core.layout.annotation import CLEAR_FILL, CLEAR_STROKE
+from trap_tester.core.layout.annotation import (
+    CLEAR_FILL,
+    CLEAR_STROKE,
+    GND_FILL,
+    GND_STROKE,
+)
 from trap_tester.gui.widgets.layout_canvas import LayoutCanvas
 
 _EMPTY_MSG = "Select an interface to start marking channels."
@@ -40,37 +45,33 @@ class AnnotationView(LayoutCanvas):
 
         self._annset = AnnotationSet()
         self._layout: InterfaceLayout | None = None
-        self._connector = 1
         self.canvas.mpl_connect("button_press_event", self._on_click)
         self.clear(_EMPTY_MSG)
 
     # ---- context / data ----------------------------------------------------
-    def set_context(self, layout: InterfaceLayout, connector: int) -> None:
-        """Show ``layout`` for ``connector`` (re-projects current marks)."""
+    def set_layout(self, layout: InterfaceLayout) -> None:
+        """Show ``layout`` whole (every connector) and re-project current marks."""
         self._layout = layout
-        self._connector = connector
-        self.render()
+        self._redraw()
 
     def set_annotations(self, annotations: AnnotationSet) -> None:
         """Replace the whole set (e.g. after loading a file) and repaint."""
         self._annset = annotations
-        self.render()
+        self._redraw()
 
     def annotations(self) -> AnnotationSet:
         return self._annset
 
     def clear_annotations(self) -> None:
         self._annset.clear_all()
-        self.render()
+        self._redraw()
         self.changed.emit()
 
-    def render(self) -> None:
+    def _redraw(self) -> None:
         if self._layout is None:
             self.clear(_EMPTY_MSG)
             return
-        self.show_drawing(
-            build_annotation_drawing(self._layout, self._annset, self._connector)
-        )
+        self.show_drawing(build_annotation_drawing(self._layout, self._annset))
 
     # ---- interaction -------------------------------------------------------
     def _on_click(self, event) -> None:
@@ -79,8 +80,10 @@ class AnnotationView(LayoutCanvas):
         pin = self._pin_at(event)
         if pin is None or pin.channel is None:  # GND / shield / empty space
             return
-        self._annset.cycle(self._connector, pin.channel)
-        self.render()
+        # each pin carries its own connector, so a multi-connector layout marks
+        # the right (connector, channel) even when several are shown together.
+        self._annset.cycle(pin.connector, pin.channel)
+        self._redraw()
         self.changed.emit()
 
     # ---- title / legend (LayoutCanvas hooks) -------------------------------
@@ -96,9 +99,14 @@ class AnnotationView(LayoutCanvas):
             if status in present:
                 handles.append(Line2D([], [], marker="o", ls="", color=color,
                                       label=label, markersize=7))
-        if present & {"clear", "unmapped"}:
-            handles.append(Line2D([], [], marker="o", ls="", label="No comment",
+        if "clear" in present:
+            handles.append(Line2D([], [], marker="o", ls="", label="No data",
                                   markerfacecolor=CLEAR_FILL,
                                   markeredgecolor=CLEAR_STROKE, color="none",
                                   markersize=7))
-        return handles
+        if "unmapped" in present:
+            handles.append(Line2D([], [], marker="o", ls="", label="GND / shield",
+                                  markerfacecolor=GND_FILL,
+                                  markeredgecolor=GND_STROKE, color="none",
+                                  markersize=7))
+        return handles + self._flavor_legend(drawing)

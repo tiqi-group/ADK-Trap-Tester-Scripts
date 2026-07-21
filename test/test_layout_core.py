@@ -36,13 +36,13 @@ def _four_outcome_df() -> pd.DataFrame:
     # ok, shorted, not-detected (open), over-nominal (high C)
     return pd.DataFrame(
         [
-            {"DSUB connector": 1, "DSUB pin": 1, "Shorted": False,
+            {"DSUB connector": 0, "DSUB pin": 1, "Shorted": False,
              "C_filter_nF": 1.0, "R_filter_Ohm": 2000},
-            {"DSUB connector": 1, "DSUB pin": 2, "Shorted": True,
+            {"DSUB connector": 0, "DSUB pin": 2, "Shorted": True,
              "C_filter_nF": -1, "R_filter_Ohm": 50},
-            {"DSUB connector": 1, "DSUB pin": 3, "Shorted": False,
+            {"DSUB connector": 0, "DSUB pin": 3, "Shorted": False,
              "C_filter_nF": 0.01, "R_filter_Ohm": 2000},
-            {"DSUB connector": 1, "DSUB pin": 4, "Shorted": False,
+            {"DSUB connector": 0, "DSUB pin": 4, "Shorted": False,
              "C_filter_nF": 2.1, "R_filter_Ohm": 1000},
         ]
     )
@@ -53,7 +53,7 @@ def test_dsub50_has_fifty_slots():
     assert len(lay.slots) == 50
     pins = sorted(s.pin for s in lay.slots)
     assert pins == list(range(1, 51))
-    assert {s.connector for s in lay.slots} == {1}
+    assert {s.connector for s in lay.slots} == {0}
     assert lay.key_by == "dsub_pin"
 
 
@@ -109,7 +109,7 @@ def test_build_drawing_alternate_key_by_fpc():
     fpc_of_pin1 = next(f.fpc_conductor for f in res.findings if f.dsub_pin == 1)
     lay = InterfaceLayout(
         name="fpc-test", key_by="fpc_conductor",
-        slots=[Slot(connector=1, pin=fpc_of_pin1, x=0.0, y=0.0)],
+        slots=[Slot(connector=0, pin=fpc_of_pin1, x=0.0, y=0.0)],
     )
     drawing = build_drawing(res, lay)
     assert len(drawing.pins) == 1
@@ -143,13 +143,13 @@ def test_all_pins_lie_inside_the_shell():
 
 def test_layout_for_all_measurements_is_dsub50():
     for m in ("measure_filter", "measure_resistance", "measure_voltage"):
-        assert layout_for(m) is dsub50_layout()  # connector 1 default is the template
+        assert layout_for(m) is dsub50_layout()  # connector 0 default is the template
     assert layout_for("nonexistent") is None
 
 
 def test_layout_for_generates_missing_connector():
-    # connector 1 is the JSON template; connector 2 is generated on demand
-    assert dsub50_layout_for_connector(1) is dsub50_layout()
+    # connector 0 is the JSON template; connector 2 is generated on demand
+    assert dsub50_layout_for_connector(0) is dsub50_layout()
     lay2 = layout_for("measure_filter", connector=2)
     assert lay2 is not None
     assert len(lay2.slots) == 50
@@ -203,7 +203,7 @@ def test_fpc_layout_is_conductor_keyed_and_channelled():
     assert by_cond[1].channel is None and by_cond[51].channel is None
     assert sum(s.channel is not None for s in lay.slots) == 49
     assert all(s.shape == "rect" for s in lay.slots)
-    assert {s.connector for s in lay.slots} == {1}
+    assert {s.connector for s in lay.slots} == {0}
 
 
 def test_channel_bridges_dsub_and_fpc_from_json_alone():

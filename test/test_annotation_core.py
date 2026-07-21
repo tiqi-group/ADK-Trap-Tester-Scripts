@@ -15,6 +15,7 @@ from trap_tester.core.layout import (
     build_annotation_drawing,
     cycle_state,
     dsub50_layout,
+    dsub50_layout_for_connector,
     fpc_layout,
 )
 
@@ -90,23 +91,24 @@ def test_annotation_from_dict_rejects_unknown_state():
 
 def test_mark_correlates_across_interfaces():
     # DSUB pin 1 carries channel 46, which the FPC ribbon exposes on conductor 48.
+    # The built-ins are connector 0 (DSUB connectors are 0-indexed).
     a = AnnotationSet()
-    a.set_state(1, 46, "faulty")
+    a.set_state(0, 46, "faulty")
 
-    d_dsub = build_annotation_drawing(dsub50_layout(), a, connector=1)
+    d_dsub = build_annotation_drawing(dsub50_layout(), a)  # whole (connector 0)
     by_channel = {p.channel: p for p in d_dsub.pins}
     assert by_channel[46].status == "faulty" and by_channel[46].pin == 1
     # every other channel is unmarked ("clear")
     assert all(p.status == "clear" for p in d_dsub.pins if p.channel not in (None, 46))
 
-    d_fpc = build_annotation_drawing(fpc_layout(), a, connector=1)
+    d_fpc = build_annotation_drawing(fpc_layout(), a)
     fpc_by_channel = {p.channel: p for p in d_fpc.pins}
     # same channel, different interface -> the fault lands on conductor 48
     assert fpc_by_channel[46].status == "faulty" and fpc_by_channel[46].pin == 48
 
 
 def test_gnd_conductors_are_unmapped_and_not_clickable():
-    d = build_annotation_drawing(fpc_layout(), AnnotationSet(), connector=1)
+    d = build_annotation_drawing(fpc_layout(), AnnotationSet())
     by_pin = {p.pin: p for p in d.pins}
     for gnd in (1, 51):
         assert by_pin[gnd].channel is None
@@ -115,8 +117,8 @@ def test_gnd_conductors_are_unmapped_and_not_clickable():
 
 
 def test_connector_scoped():
-    # a mark on connector 1 does not appear when projecting connector 2
+    # a mark on connector 0 does not appear when focusing a different connector
     a = AnnotationSet()
-    a.set_state(1, 46, "faulty")
-    d2 = build_annotation_drawing(dsub50_layout(), a, connector=2)
-    assert all(p.status in ("clear", "unmapped") for p in d2.pins)
+    a.set_state(0, 46, "faulty")
+    d5 = build_annotation_drawing(dsub50_layout_for_connector(5), a)
+    assert all(p.status in ("clear", "unmapped") for p in d5.pins)

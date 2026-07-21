@@ -16,7 +16,6 @@ yielding the same renderer-ready :class:`Drawing` the analysis viewer uses.
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,6 +28,8 @@ from trap_tester.core.layout.interface import (
 )
 
 if TYPE_CHECKING:
+    from collections.abc import Iterator
+
     from trap_tester.core.layout.interface import InterfaceLayout
 
 # state key -> (human label, fill colour). "no comment" is the *absence* of a
@@ -41,10 +42,14 @@ ANNOTATION_STATES: dict[str, tuple[str, str]] = {
 # The click cycle: no comment -> suspicious -> faulty -> no comment.
 CYCLE: tuple[str | None, ...] = (None, "suspicious", "faulty")
 
-# Faint styling for an un-annotated (or unmapped) contact — reuse the analysis
-# viewer's "unmeasured" look so the two visualisers feel like one tool.
+# Faint styling for a mapped-but-unmarked contact — reuse the analysis viewer's
+# "unmeasured" look so the two visualisers feel like one tool.
 CLEAR_FILL = UNMEASURED_FILL
 CLEAR_STROKE = UNMEASURED_STROKE
+# GND / shield / unmapped pads get a faint blue so the ground pattern reads at a
+# glance (they carry no channel and are never clickable).
+GND_FILL = "#cfe0f3"
+GND_STROKE = "#9fb8d8"
 
 _JSON_KIND = "trap-tester-annotations"
 _JSON_VERSION = 1
@@ -181,46 +186,57 @@ class AnnotationSet:
 
 
 def build_annotation_drawing(
-    layout: InterfaceLayout, annotations: AnnotationSet, connector: int
+    layout: InterfaceLayout, annotations: AnnotationSet, connector: int | None = None
 ) -> Drawing:
-    """Project ``annotations`` onto ``layout`` for one connector.
+    """Project ``annotations`` onto ``layout``.
 
-    Each slot becomes a :class:`PinMark` coloured by the mark on its
-    ``channel``: annotated slots take the state colour, mapped-but-unmarked slots
-    are faint, and slots with no channel (GND / shield / unmapped) are faint and
-    carry ``channel=None`` so a renderer knows they are not clickable.
+    Each slot is coloured by the mark on *its own* ``(connector, channel)`` — so a
+    multi-connector layout (e.g. an interposer spanning several DSUB connectors)
+    is drawn whole with each pad reflecting the right connector's mark. Pass
+    ``connector`` to focus a single connector (others are omitted); leave it
+    ``None`` to draw every connector.
+
+    Annotated slots take the state colour; mapped-but-unmarked slots are faint;
+    slots with no channel (GND / shield / unmapped) are faint and carry
+    ``channel=None`` so a renderer knows they are not clickable.
     """
     pins: list[PinMark] = []
     for slot in layout.slots:
+        conn = slot.connector
+        if connector is not None and conn != connector:
+            continue
         channel = slot.channel
-        state = annotations.state(connector, channel) if channel is not None else None
+        state = annotations.state(conn, channel) if channel is not None else None
+        ident = f"conn {conn} · {layout.key_by} {slot.pin} · channel {channel}"
         if state is not None:
-            label, color = ANNOTATION_STATES[state]
-            note = annotations.note(connector, channel)
-            message = f"{layout.key_by} {slot.pin} · channel {channel}: {label}"
+            state_label, color = ANNOTATION_STATES[state]
+            note = annotations.note(conn, channel)
+            message = f"{ident}: {state_label}"
             if note:
                 message += f"\n{note}"
             pins.append(
                 PinMark(
                     x=slot.x, y=slot.y, r=slot.r, shape=slot.shape,
-                    connector=connector, pin=slot.pin, status=state,
-                    fill=color, stroke="#333", label=str(slot.pin),
+                    connector=conn, pin=slot.pin, status=state,
+                    fill=color, stroke="#333", label=slot.display_label,
                     message=message, measured=True, channel=channel,
                 )
             )
         else:
             unmapped = channel is None
             message = (
-                f"{layout.key_by} {slot.pin}: no channel (GND / unmapped)"
+                f"conn {conn} · {layout.key_by} {slot.pin}: no channel (GND / unmapped)"
                 if unmapped
-                else f"{layout.key_by} {slot.pin} · channel {channel}: no comment"
+                else f"{ident}: no comment"
             )
             pins.append(
                 PinMark(
                     x=slot.x, y=slot.y, r=slot.r, shape=slot.shape,
-                    connector=connector, pin=slot.pin,
+                    connector=conn, pin=slot.pin,
                     status="unmapped" if unmapped else "clear",
-                    fill=CLEAR_FILL, stroke=CLEAR_STROKE, label=str(slot.pin),
+                    fill=GND_FILL if unmapped else CLEAR_FILL,
+                    stroke=GND_STROKE if unmapped else CLEAR_STROKE,
+                    label=slot.display_label,
                     message=message, measured=False, channel=channel,
                 )
             )
@@ -236,4 +252,6 @@ __all__ = [
     "build_annotation_drawing",
     "CLEAR_FILL",
     "CLEAR_STROKE",
+    "GND_FILL",
+    "GND_STROKE",
 ]
