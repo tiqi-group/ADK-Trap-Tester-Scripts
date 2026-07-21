@@ -16,7 +16,13 @@ import pandas as pd
 
 from trap_tester.core.reporter import MeasurementContext
 from trap_tester.core.settings import VoltageSettings, save_result
-from trap_tester.utils import SW_ADC_TO_GND_IDX, SW_MEAS_SEL_IDX, disable_dac, set_adc
+from trap_tester.utils import (
+    SW_ADC_TO_GND_IDX,
+    SW_MEAS_SEL_IDX,
+    blinking_led,
+    disable_dac,
+    set_adc,
+)
 
 _COLUMNS = ["Measurement round", "DSUB pin", "V_avg", "V_std"]
 
@@ -78,13 +84,17 @@ def run_voltage_measurement(ctx: MeasurementContext) -> pd.DataFrame:
             ctx.report.result(row)
             ctx.report.log(f"Round {k}, pin {pin}: V_avg {v_avg:.4f} V, V_std {v_std:.4f} V")
 
-        if ctx.gate.confirm("Retake measurement?"):
+        # Blink the on-device USER LED while blocking on the operator.
+        with blinking_led(io):
+            retake = ctx.gate.confirm("Retake measurement?")
+        if retake:
             ctx.report.status(f"Retaking round {k + 1}")
             continue
         results.extend(round_rows)
 
         if k + 1 < s.n_rounds:
-            ctx.gate.wait_continue(f"Configure for round {k + 2} and continue")
+            with blinking_led(io):
+                ctx.gate.wait_continue(f"Configure for round {k + 2} and continue")
         k += 1
 
     return _finalise(results, s, ctx)

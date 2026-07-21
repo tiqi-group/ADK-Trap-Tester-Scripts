@@ -103,5 +103,33 @@ def step_double_rc(x, c1, c2, r1, r2, t_start, V_end):
 def blink_user_led(io, period):
     thread = threading.current_thread()
     while getattr(thread, "do_run", True):
-        io[USR_LED_IDX].output_state =  1 - io[USR_LED_IDX].output_state
+        try:
+            io[USR_LED_IDX].output_state =  1 - io[USR_LED_IDX].output_state
+        except Exception:  # noqa: BLE001 - LED is cosmetic; never crash the thread
+            return
         t.sleep(period/2.0)
+
+
+from contextlib import contextmanager
+
+
+@contextmanager
+def blinking_led(io, period=0.5):
+    """Blink the on-device USER LED while the body runs, then leave it off.
+
+    Used to draw the operator's eye to the hardware whenever the measurement
+    blocks on them (accept/retake, switch-connector). A stray I/O error in the
+    blink thread must never take down the measurement, so failures are swallowed
+    and the LED is always driven low on exit.
+    """
+    thread = threading.Thread(target=blink_user_led, args=(io, period), daemon=True)
+    thread.start()
+    try:
+        yield
+    finally:
+        thread.do_run = False
+        thread.join(timeout=period)
+        try:
+            io[USR_LED_IDX].output_state = 0
+        except Exception:  # noqa: BLE001 - LED is cosmetic; never fail the run
+            pass

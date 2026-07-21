@@ -28,6 +28,7 @@ from trap_tester.utils import (
     SENSE_MAG,
     SW_ADC_TO_GND_IDX,
     SW_MEAS_SEL_IDX,
+    blinking_led,
     set_adc,
     set_dac,
 )
@@ -157,13 +158,17 @@ def run_resistance_measurement(ctx: MeasurementContext) -> pd.DataFrame:
                 f"shorted {est['shorted']}, high-Z {est['high_imp']}"
             )
 
-        if ctx.gate.confirm("Retake measurement?"):
+        # Blink the on-device USER LED while blocking on the operator.
+        with blinking_led(io):
+            retake = ctx.gate.confirm("Retake measurement?")
+        if retake:
             ctx.report.status(f"Retaking round {k + 1}")
             continue
         results.extend(round_rows)
 
         if k + 1 < s.n_rounds:
-            ctx.gate.wait_continue(f"Configure for round {k + 2} and continue")
+            with blinking_led(io):
+                ctx.gate.wait_continue(f"Configure for round {k + 2} and continue")
         k += 1
 
     return _finalise(results, s, ctx)

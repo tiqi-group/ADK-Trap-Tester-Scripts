@@ -23,7 +23,10 @@ name, so there is no dwfpy import here.
 from __future__ import annotations
 
 import time
+from contextlib import nullcontext
 from typing import Any, Callable
+
+from trap_tester.utils import blinking_led
 
 # trigger-source setting -> forced scope channel (Ch1 voltage / Ch2 current)
 _FORCED_CHANNEL = {"voltage": 0, "current": 1}
@@ -118,19 +121,28 @@ def free_run(
     if callable(begin):
         begin(prompt)
 
+    # Blink the on-device USER LED for the whole interactive session, so the
+    # hardware calls for attention while the operator inspects the live signal.
+    try:
+        io = ctx.device.digital_io
+    except Exception:  # noqa: BLE001 - not all devices expose digital IO
+        io = None
+    led = blinking_led(io) if io is not None else nullcontext()
+
     last: tuple[Any, Any] = (None, None)
     try:
-        while True:
-            if _gate_call(gate, "freerun_capture_due", True):
-                scope.single(
-                    sample_rate=sample_rate, buffer_size=buffer_size,
-                    configure=True, start=True,
-                )
-                last = (scope[0].get_data(), scope[1].get_data())
-                publish()
-            if _gate_call(gate, "freerun_done", True) or ctx.should_cancel():
-                break
-            time.sleep(_FREERUN_POLL_S)
+        with led:
+            while True:
+                if _gate_call(gate, "freerun_capture_due", True):
+                    scope.single(
+                        sample_rate=sample_rate, buffer_size=buffer_size,
+                        configure=True, start=True,
+                    )
+                    last = (scope[0].get_data(), scope[1].get_data())
+                    publish()
+                if _gate_call(gate, "freerun_done", True) or ctx.should_cancel():
+                    break
+                time.sleep(_FREERUN_POLL_S)
     finally:
         end = getattr(gate, "end_freerun", None)
         if callable(end):

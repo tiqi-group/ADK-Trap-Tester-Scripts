@@ -39,6 +39,7 @@ from trap_tester.utils import (
     SENSE_MAG,
     SW_ADC_TO_GND_IDX,
     SW_MEAS_SEL_IDX,
+    blinking_led,
     set_dac,
     step_double_rc,
 )
@@ -293,14 +294,19 @@ def run_filter_measurement(ctx: MeasurementContext) -> pd.DataFrame:
             round_rows.append(row)
             ctx.report.result(row)
 
-        # Commit the round only once the operator is happy with it.
-        if ctx.gate.confirm("Retake measurement?"):
+        # Commit the round only once the operator is happy with it. Blink the
+        # on-device USER LED while we block on them, so the hardware calls for
+        # attention (accept/retake, then switch connector).
+        with blinking_led(io):
+            retake = ctx.gate.confirm("Retake measurement?")
+        if retake:
             ctx.report.status(f"Retaking connector {k + 1}")
             continue
         results.extend(round_rows)
 
         if k + 1 < s.n_dsub:
-            ctx.gate.wait_continue(f"Switch to DSUB connector {k + 2} and continue")
+            with blinking_led(io):
+                ctx.gate.wait_continue(f"Switch to DSUB connector {k + 2} and continue")
         k += 1
 
     return _finalise(results, s, ctx)
