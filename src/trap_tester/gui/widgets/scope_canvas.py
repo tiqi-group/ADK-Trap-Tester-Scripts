@@ -28,6 +28,9 @@ class ChannelSpec:
 _VOLT_A = ChannelSpec("Voltage", "V", 1.0, "#1f77b4")
 _VOLT_B = ChannelSpec("Measured V", "V", 1.0, "#d62728")
 _CURRENT = ChannelSpec("Current", "mA", _CURRENT_MA_PER_RAW, "#d62728")
+# Raw (unscaled) voltage of the current channel, overlaid on the current plot
+# so the current trigger can be set against the actual measured signal.
+_RAW_V = ChannelSpec("Raw V", "V", 1.0, "#1f77b4")
 
 # per-measurement channel semantics (scope[0], scope[1])
 CHANNELS: dict[str, tuple[ChannelSpec, ChannelSpec]] = {
@@ -169,12 +172,14 @@ class ScopeCanvas(QWidget):
         ch_a = np.asarray(ch_a, dtype=float)
         ch_b = np.asarray(ch_b, dtype=float)
         t_ms = np.arange(ch_a.size) / sample_rate * 1e3
+        # top plot: channel 1's voltage.
         self._draw(self.canvas_ch1, "Ch1", self._spec_a, t_ms, ch_a)
-        # For current measurements (Ch2 in mA), overlay the measured voltage
-        # (Ch1's signal) on a secondary right-hand y-axis, time-aligned.
-        overlay = self._spec_a if self._spec_b.unit == "mA" else None
+        # For current measurements (Ch2 in mA), overlay channel 2's own raw
+        # voltage — the signal the current is derived from — on a secondary
+        # right-hand y-axis, so the current trigger can be set against it.
+        overlay = _RAW_V if self._spec_b.unit == "mA" else None
         self._draw(self.canvas_ch2, "Ch2", self._spec_b, t_ms, ch_b,
-                   overlay_spec=overlay, overlay_raw=ch_a)
+                   overlay_spec=overlay, overlay_raw=ch_b)
 
     @staticmethod
     def _draw(
@@ -215,6 +220,10 @@ class ScopeCanvas(QWidget):
             ov_line, = canvas.ax_r.plot(
                 t_ms, odata, color=overlay_spec.color, lw=1.0, ls="--", zorder=3,
                 label=f"{overlay_spec.name} [{overlay_spec.unit}]")
+            # ax_r.clear() resets the label back to the left, so force the
+            # secondary axis label and ticks onto the right side each redraw.
+            canvas.ax_r.yaxis.set_label_position("right")
+            canvas.ax_r.yaxis.tick_right()
             canvas.ax_r.set_ylabel(
                 f"{overlay_spec.name} [{overlay_spec.unit}]", color=overlay_spec.color)
             canvas.ax_r.tick_params(axis="y", colors=overlay_spec.color)
