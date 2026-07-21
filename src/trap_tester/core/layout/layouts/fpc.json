@@ -1,0 +1,563 @@
+{
+  "name": "FPC ribbon (connector 1)",
+  "units": "mm",
+  "key_by": "fpc_conductor",
+  "background": [
+    {
+      "x": 25.0,
+      "y": 0.0,
+      "w": 51.6,
+      "h": 2.4000000000000004,
+      "rotation": 0.0,
+      "fill": "#fbfbfb",
+      "stroke": "#8a8a8a",
+      "width": 2.0,
+      "kind": "rect"
+    },
+    {
+      "x": 0.0,
+      "y": 1.5500000000000003,
+      "text": "FPC ribbon \u00b7 connector 1 \u00b7 51 conductors (1 & 51 = GND shield)",
+      "size": 9,
+      "color": "#8a8a8a",
+      "ha": "left",
+      "va": "bottom",
+      "rotation": 0.0,
+      "kind": "text"
+    },
+    {
+      "x": 0.0,
+      "y": -0.7,
+      "text": "GND",
+      "size": 6,
+      "color": "#8a8a8a",
+      "ha": "center",
+      "va": "top",
+      "rotation": 0.0,
+      "kind": "text"
+    },
+    {
+      "x": 50.0,
+      "y": -0.7,
+      "text": "GND",
+      "size": 6,
+      "color": "#8a8a8a",
+      "ha": "center",
+      "va": "top",
+      "rotation": 0.0,
+      "kind": "text"
+    }
+  ],
+  "slots": [
+    {
+      "connector": 1,
+      "pin": 1,
+      "x": 0.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": null
+    },
+    {
+      "connector": 1,
+      "pin": 2,
+      "x": 1.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 1
+    },
+    {
+      "connector": 1,
+      "pin": 3,
+      "x": 2.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 2
+    },
+    {
+      "connector": 1,
+      "pin": 4,
+      "x": 3.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 3
+    },
+    {
+      "connector": 1,
+      "pin": 5,
+      "x": 4.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 4
+    },
+    {
+      "connector": 1,
+      "pin": 6,
+      "x": 5.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 5
+    },
+    {
+      "connector": 1,
+      "pin": 7,
+      "x": 6.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 6
+    },
+    {
+      "connector": 1,
+      "pin": 8,
+      "x": 7.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 7
+    },
+    {
+      "connector": 1,
+      "pin": 9,
+      "x": 8.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 8
+    },
+    {
+      "connector": 1,
+      "pin": 10,
+      "x": 9.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 9
+    },
+    {
+      "connector": 1,
+      "pin": 11,
+      "x": 10.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 10
+    },
+    {
+      "connector": 1,
+      "pin": 12,
+      "x": 11.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 11
+    },
+    {
+      "connector": 1,
+      "pin": 13,
+      "x": 12.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 12
+    },
+    {
+      "connector": 1,
+      "pin": 14,
+      "x": 13.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 13
+    },
+    {
+      "connector": 1,
+      "pin": 15,
+      "x": 14.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 14
+    },
+    {
+      "connector": 1,
+      "pin": 16,
+      "x": 15.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 15
+    },
+    {
+      "connector": 1,
+      "pin": 17,
+      "x": 16.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 16
+    },
+    {
+      "connector": 1,
+      "pin": 18,
+      "x": 17.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 17
+    },
+    {
+      "connector": 1,
+      "pin": 19,
+      "x": 18.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 18
+    },
+    {
+      "connector": 1,
+      "pin": 20,
+      "x": 19.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 19
+    },
+    {
+      "connector": 1,
+      "pin": 21,
+      "x": 20.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 20
+    },
+    {
+      "connector": 1,
+      "pin": 22,
+      "x": 21.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 21
+    },
+    {
+      "connector": 1,
+      "pin": 23,
+      "x": 22.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 22
+    },
+    {
+      "connector": 1,
+      "pin": 24,
+      "x": 23.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 23
+    },
+    {
+      "connector": 1,
+      "pin": 25,
+      "x": 24.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 24
+    },
+    {
+      "connector": 1,
+      "pin": 26,
+      "x": 25.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 50
+    },
+    {
+      "connector": 1,
+      "pin": 27,
+      "x": 26.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 25
+    },
+    {
+      "connector": 1,
+      "pin": 28,
+      "x": 27.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 26
+    },
+    {
+      "connector": 1,
+      "pin": 29,
+      "x": 28.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 27
+    },
+    {
+      "connector": 1,
+      "pin": 30,
+      "x": 29.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 28
+    },
+    {
+      "connector": 1,
+      "pin": 31,
+      "x": 30.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 29
+    },
+    {
+      "connector": 1,
+      "pin": 32,
+      "x": 31.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 30
+    },
+    {
+      "connector": 1,
+      "pin": 33,
+      "x": 32.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 31
+    },
+    {
+      "connector": 1,
+      "pin": 34,
+      "x": 33.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 32
+    },
+    {
+      "connector": 1,
+      "pin": 35,
+      "x": 34.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 33
+    },
+    {
+      "connector": 1,
+      "pin": 36,
+      "x": 35.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 34
+    },
+    {
+      "connector": 1,
+      "pin": 37,
+      "x": 36.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 35
+    },
+    {
+      "connector": 1,
+      "pin": 38,
+      "x": 37.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 36
+    },
+    {
+      "connector": 1,
+      "pin": 39,
+      "x": 38.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 37
+    },
+    {
+      "connector": 1,
+      "pin": 40,
+      "x": 39.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 38
+    },
+    {
+      "connector": 1,
+      "pin": 41,
+      "x": 40.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 39
+    },
+    {
+      "connector": 1,
+      "pin": 42,
+      "x": 41.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 40
+    },
+    {
+      "connector": 1,
+      "pin": 43,
+      "x": 42.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 41
+    },
+    {
+      "connector": 1,
+      "pin": 44,
+      "x": 43.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 42
+    },
+    {
+      "connector": 1,
+      "pin": 45,
+      "x": 44.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 43
+    },
+    {
+      "connector": 1,
+      "pin": 46,
+      "x": 45.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 44
+    },
+    {
+      "connector": 1,
+      "pin": 47,
+      "x": 46.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 45
+    },
+    {
+      "connector": 1,
+      "pin": 48,
+      "x": 47.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 46
+    },
+    {
+      "connector": 1,
+      "pin": 49,
+      "x": 48.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 47
+    },
+    {
+      "connector": 1,
+      "pin": 50,
+      "x": 49.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": 48
+    },
+    {
+      "connector": 1,
+      "pin": 51,
+      "x": 50.0,
+      "y": 0.0,
+      "r": 0.4,
+      "rot": 0.0,
+      "shape": "rect",
+      "channel": null
+    }
+  ]
+}

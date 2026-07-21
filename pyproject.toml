@@ -34,6 +34,14 @@ build-backend = "hatchling.build"
 packages = ["src/trap_tester"]
 
 
+[tool.pytest.ini_options]
+# Only collect the refactored, hardware-free regression suites. The legacy
+# scripts in test/ (test_trap_tester.py, step_response.py) run hardware code at
+# import time and would hang a bare ``pytest`` run.
+testpaths = ["test"]
+python_files = ["test_*_core.py"]
+
+
 [tool.pyright]
 include = ["src/trap_tester", "test"]
 typeCheckingMode = "basic"

@@ -23,6 +23,12 @@ import pandas as pd
 from scipy import signal
 from scipy.optimize import curve_fit
 
+from trap_tester.core.measurements._capture import (
+    apply_trigger,
+    free_run,
+    resolve_trigger,
+    triggered_capture,
+)
 from trap_tester.core.reporter import MeasurementContext
 from trap_tester.core.settings import FilterSettings, save_result
 from trap_tester.utils import (
@@ -74,15 +80,59 @@ def _init_device(device: Any) -> tuple[Any, Any, Any]:
     return io, device.analog_output, device.analog_input
 
 
-def _capture(scope: Any, ctx: MeasurementContext, fs: float, buf: int, b, a):
-    """Take a single shot, publish it for live plotting, return filtered traces."""
-    scope.single(sample_rate=fs, buffer_size=buf, configure=True, start=True)
+def _filter_traces(scope: Any, ctx: MeasurementContext, fs: float, b, a):
+    """Publish the current buffers for live plotting and return filtered traces."""
     raw_v = scope[0].get_data()
     raw_i = scope[1].get_data()
     ctx.report.capture(raw_v, raw_i, fs)
     v_divider = signal.filtfilt(b, a, raw_v)
     i_to_trap = signal.filtfilt(b, a, raw_i) / (R_SENSE * SENSE_MAG)  # A
     return v_divider, i_to_trap
+
+
+def _capture(scope: Any, ctx: MeasurementContext, s: FilterSettings, fs: float, buf: int, b, a):
+    """Triggered single shot. Returns ``(v_divider, i_to_trap, status)``.
+
+    ``status`` is ``"done"`` / ``"timeout"`` / ``"cancelled"``; the traces are
+    ``None`` unless the capture completed.
+    """
+    status = triggered_capture(
+        scope, ctx, sample_rate=fs, buffer_size=buf, timeout=s.trigger_timeout
+    )
+    if status != "done":
+        return None, None, status
+    v_divider, i_to_trap = _filter_traces(scope, ctx, fs, b, a)
+    return v_divider, i_to_trap, status
+
+
+def _debug_freerun(
+    scope: Any, ctx: MeasurementContext, s: FilterSettings, fs: float, buf: int, label: str
+):
+    """Enter live free-run (scope) mode so a non-triggering point can be inspected.
+
+    Runs until the operator presses Continue (or cancels). Records nothing —
+    purely diagnostic. Returns the last frame's raw ``(ch0, ch1)`` traces.
+    """
+    ctx.report.log(
+        f"No trigger within {s.trigger_timeout:g} s ({label}) — entering free-run "
+        "(scope) mode. Inspect the signal, then press Continue."
+    )
+    prompt = (
+        f"No trigger — {label}. Free-running (scope mode): "
+        "'Single' freezes a frame, 'Continue' skips this point."
+    )
+    return free_run(
+        scope, ctx, sample_rate=fs, buffer_size=buf, prompt=prompt,
+        publish=lambda: ctx.report.capture(scope[0].get_data(), scope[1].get_data(), fs),
+    )
+
+
+def _skip_row(scope: Any, ctx: MeasurementContext, s: FilterSettings, k: int, pin: int, status: str):
+    """Debug a no-trigger (live free-run), then return a skipped-point row (C=R=-1)."""
+    if status == "timeout":
+        _debug_freerun(scope, ctx, s, s.f_sample, s.buffer_size, f"connector {k}, pin {pin}")
+    ctx.report.log(f"Connector {k}, pin {pin}: no trigger — skipping (C=-1, R=-1)")
+    return _row(k, pin, False, -1, -1, -1, -1)
 
 
 def _measure_baseline(scope, wavegen, ctx, s, b, a):
@@ -94,10 +144,16 @@ def _measure_baseline(scope, wavegen, ctx, s, b, a):
         frequency=s.f_square, function="square", offset=io_amp, amplitude=io_amp,
         start=True,
     )
-    scope.setup_edge_trigger(
-        mode="normal", channel=1, slope="rising", level=0.4, hysteresis=0
-    )
-    v_divider, i_to_trap = _capture(scope, ctx, s.f_sample, s.buffer_size, b, a)
+    # baseline triggers on the configured channel (current Ch2 @ 0.4 V by default)
+    ch, level, slope = resolve_trigger(s)
+    apply_trigger(scope, ch, level, slope, mode="normal", hysteresis=0.0)
+    v_divider, i_to_trap, status = _capture(scope, ctx, s, s.f_sample, s.buffer_size, b, a)
+    if status == "cancelled":
+        return 0.0, 0.0
+    if status == "timeout":
+        ctx.report.log("Baseline did not trigger — using an untriggered capture.")
+        _raw_v, raw_i = _debug_freerun(scope, ctx, s, s.f_sample, s.buffer_size, "baseline")
+        i_to_trap = signal.filtfilt(b, a, raw_i) / (R_SENSE * SENSE_MAG)
 
     i_offset = np.mean(i_to_trap[:_N_TAIL])
     c_baseline = np.sum(i_to_trap - i_offset) / s.f_sample / s.amplitude  # C = Q/V
@@ -130,15 +186,21 @@ def _classify_offnominal(ctx, s, k, pin, v_end, i_end, i_short) -> dict[str, Any
 
 def _fit_filter(scope, ctx, s, k, pin, b, a, c_baseline, i_offset) -> dict[str, Any]:
     """Nominal branch: average N_AVG double-RC fits of the step response."""
-    scope.setup_edge_trigger(
-        mode="normal", channel=0, slope="rising", level=0.05, hysteresis=0.01
-    )
+    # Fit uses the same trigger as the rest of the measurement (current Ch2 @
+    # 0.4 V by default). The current trigger fires reliably whenever a filter /
+    # short / small cap is attached (a short even clamps the divider voltage low,
+    # so a voltage trigger could miss it), and the fit's t_start is a free
+    # parameter so the exact trace alignment is absorbed.
+    ch, level, slope = resolve_trigger(s)
+    apply_trigger(scope, ch, level, slope, mode="normal", hysteresis=0.01)
     c_est = np.zeros(s.n_avg)
     r_est = np.zeros(s.n_avg)
     perr_acc = np.zeros(6)
     _t = np.arange(s.buffer_size) / s.f_sample
     for i in range(s.n_avg):
-        v_divider, i_to_trap = _capture(scope, ctx, s.f_sample, s.buffer_size, b, a)
+        v_divider, i_to_trap, status = _capture(scope, ctx, s, s.f_sample, s.buffer_size, b, a)
+        if status != "done":
+            return _skip_row(scope, ctx, s, k, pin, status)
         c_est_i = np.sum(i_to_trap - i_offset) / s.f_sample / s.amplitude - c_baseline
         c_est_i = max(c_est_i, 1e-15)
         lower = [0.98 * c_baseline, 0.98 * c_est_i, 10460, 100, _t[0], 0.95 * s.amplitude]
@@ -162,7 +224,14 @@ def _fit_filter(scope, ctx, s, k, pin, b, a, c_baseline, i_offset) -> dict[str, 
 def _measure_pin(scope, io, ctx, s, k, pin, b, a, c_baseline, i_ss_baseline, i_short):
     """Measure one DSUB pin and return its result row."""
     set_dac(io, pin)
-    v_divider, i_to_trap = _capture(scope, ctx, s.f_sample, s.buffer_size, b, a)
+    # (Re)establish this pin's trigger every pin: a no-trigger free-run leaves
+    # the scope in auto mode, and inheriting that makes the settling capture read
+    # garbage. [fixes the "pins after a non-triggering one are always faulty" bug]
+    ch, level, slope = resolve_trigger(s)
+    apply_trigger(scope, ch, level, slope, mode="normal", hysteresis=0.0)
+    v_divider, i_to_trap, status = _capture(scope, ctx, s, s.f_sample, s.buffer_size, b, a)
+    if status != "done":
+        return _skip_row(scope, ctx, s, k, pin, status)
     i_offset = np.mean(i_to_trap[:_N_TAIL])
     i_end = np.mean(i_to_trap[-_N_TAIL:])
     v_end = np.mean(v_divider[-_N_TAIL:])
@@ -173,7 +242,9 @@ def _measure_pin(scope, io, ctx, s, k, pin, b, a, c_baseline, i_ss_baseline, i_s
 
     if i_end > 2 * i_ss_baseline:
         # elevated current: either still charging, or a high-impedance short
-        _, i_slow = _capture(scope, ctx, s.f_sample / 2, s.buffer_size, b, a)
+        _, i_slow, status = _capture(scope, ctx, s, s.f_sample / 2, s.buffer_size, b, a)
+        if status != "done":
+            return _skip_row(scope, ctx, s, k, pin, status)
         if np.mean(i_slow[-_N_TAIL:]) >= 1.5 * i_end:
             ctx.report.log("Fishy stuff, probably high impedance short")
             return _row(k, pin, False, -1, -1, -1, -1)

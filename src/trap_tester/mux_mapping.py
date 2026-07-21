@@ -1,3 +1,10 @@
+# The FPC ribbon has 51 conductors. Conductors 1 and 51 are hardwired to GND and
+# act as shielding — they carry no channel and appear in no mapping below. The
+# 49 channel-carrying conductors are 2..50.
+FPC_N_CONDUCTORS = 51
+FPC_GND_CONDUCTORS = (1, 51)
+
+# signal (canonical channel) -> FPC conductor.
 signal_to_fpc = {
     1: 2,
     2: 3,
@@ -47,7 +54,10 @@ signal_to_fpc = {
     46: 48,
     47: 49,
     48: 50,
-    49: 26,
+    # FPC conductor 26 belongs to signal 50 (DSUB pin 42). This was previously
+    # keyed to signal 49 (DSUB pin 9), but pin 9 is GND and maps to no signal
+    # conductor — it leaves signal 50 (pin 42) with no conductor. Corrected here.
+    50: 26,
 }
 
 signal_to_dsub = {

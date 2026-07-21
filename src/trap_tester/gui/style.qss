@@ -38,7 +38,8 @@ QPushButton[role="interactive"]:disabled { background: #b9d4b9; color: #6a806a; 
 QGroupBox[role="interactive"] {
     border: 2px solid #6cb46c;
     border-radius: 6px;
-    margin-top: 8px;
+    /* side/bottom margins keep the border off the window edge (else clipped) */
+    margin: 8px 3px 3px 3px;
     background: rgba(108, 180, 108, 0.08);
 }
 QGroupBox[role="interactive"]::title {
@@ -55,12 +56,19 @@ QLineEdit[role="interactive"] {
     background: white;
 }
 QLabel[role="interactive"] { color: #3d7a3d; font-weight: bold; }
+QLabel[role="section"] {
+    color: #2c5286;
+    font-weight: bold;
+    margin-top: 6px;
+    border-bottom: 1px solid #6cb46c;
+}
 
 /* Viewers — red */
 QGroupBox[role="viewer"] {
     border: 2px solid #e0492f;
     border-radius: 6px;
-    margin-top: 8px;
+    /* side/bottom margins keep the border off the window edge (else clipped) */
+    margin: 8px 3px 3px 3px;
 }
 QGroupBox[role="viewer"]::title {
     subcontrol-origin: margin;

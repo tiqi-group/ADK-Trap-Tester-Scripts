@@ -25,6 +25,25 @@ def _default_invalid_pins() -> list[int]:
     return [DSUB_GND_PIN, FPC_SPARE_CONDUCTOR]
 
 
+# Choices offered in the settings form (rendered as drop-downs).
+_TRIGGER_SOURCES = ["current", "voltage"]  # current (Ch2) is the reliable edge
+_TRIGGER_SLOPES = ["rising", "falling", "either"]
+
+# Settings-form section headers (see SettingsForm's ``category`` metadata).
+_CAT_TEST = "Testing"
+_CAT_DSP = "Digital processing"
+_CAT_TRIG = "Trigger"
+_CAT_THRESH = "Detection thresholds"
+
+
+def _meta(category: str, choices: list[str] | None = None) -> dict[str, Any]:
+    """Field metadata: a settings-form category and optional drop-down choices."""
+    md: dict[str, Any] = {"category": category}
+    if choices is not None:
+        md["choices"] = choices
+    return md
+
+
 class _SettingsMixin:
     """Shared (de)serialisation + pin helpers for every settings dataclass."""
 
@@ -43,43 +62,84 @@ class _SettingsMixin:
 
 @dataclass
 class FilterSettings(_SettingsMixin):
-    """Settings for the attached-RC-filter characterisation (``measure_filter``)."""
+    """Settings for the attached-RC-filter characterisation (``measure_filter``).
 
-    n_dsub: int = 1  # number of DSUB connectors to loop over
-    f_sample: float = 25e6 / 4.0  # scope sample rate [Hz]
-    buffer_size: int = 8192  # samples per capture
-    f_square: float = (25e6 / 4.0) / (8192 * 10)  # excitation square-wave freq [Hz]
-    amplitude: float = 1.5  # applied step amplitude V_IN [V]
-    cutoff: float = 2e5  # digital low-pass cutoff [Hz]
-    n_avg: int = 5  # fits averaged per pin
-    file_prefix: str = "test"
-    invalid_pins: list[int] = field(default_factory=_default_invalid_pins)
+    Fields are grouped into settings-form sections via their ``category``
+    metadata: Testing, Digital processing and Trigger.
+    """
+
+    # --- Testing ---
+    n_dsub: int = field(default=1, metadata=_meta(_CAT_TEST))  # DSUB connectors to loop
+    f_sample: float = field(default=25e6 / 4.0, metadata=_meta(_CAT_TEST))  # sample rate [Hz]
+    buffer_size: int = field(default=8192, metadata=_meta(_CAT_TEST))  # samples per capture
+    f_square: float = field(  # excitation square-wave freq [Hz]
+        default=(25e6 / 4.0) / (8192 * 10), metadata=_meta(_CAT_TEST)
+    )
+    amplitude: float = field(default=1.5, metadata=_meta(_CAT_TEST))  # step V_IN [V]
+    invalid_pins: list[int] = field(
+        default_factory=_default_invalid_pins, metadata=_meta(_CAT_TEST)
+    )
+    file_prefix: str = field(default="test", metadata=_meta(_CAT_TEST))
+
+    # --- Digital processing ---
+    cutoff: float = field(default=2e5, metadata=_meta(_CAT_DSP))  # low-pass cutoff [Hz]
+    n_avg: int = field(default=5, metadata=_meta(_CAT_DSP))  # fits averaged per pin
+
+    # --- Trigger (see core.measurements._capture) ---
+    # "current" (Ch2 @ trigger_level) is the reliable edge for this measurement —
+    # it fires on a filter/short/small-cap, and a short clamps the divider
+    # voltage low so a "voltage" (Ch1) trigger could miss it. On no trigger
+    # within trigger_timeout the scope enters interactive free-run (live scope)
+    # mode until the operator presses Continue, then the point is skipped
+    # (C=R=-1); the free-run itself records nothing.
+    trigger_source: str = field(default="current", metadata=_meta(_CAT_TRIG, _TRIGGER_SOURCES))
+    trigger_level: float = field(default=0.4, metadata=_meta(_CAT_TRIG))  # trigger level [V]
+    trigger_slope: str = field(default="rising", metadata=_meta(_CAT_TRIG, _TRIGGER_SLOPES))
+    trigger_timeout: float = field(default=2.0, metadata=_meta(_CAT_TRIG))  # [s]; <=0 forever
 
 
 @dataclass
 class VoltageSettings(_SettingsMixin):
     """Settings for the voltage meter (``measure_voltage``)."""
 
-    n_rounds: int = 4  # measurement rounds (e.g. per connector)
-    f_sample: float = 25e6  # scope sample rate [Hz]
-    buffer_size: int = 8192
-    file_prefix: str = "test"
-    invalid_pins: list[int] = field(default_factory=_default_invalid_pins)
+    # --- Testing ---
+    n_rounds: int = field(default=4, metadata=_meta(_CAT_TEST))  # measurement rounds
+    f_sample: float = field(default=25e6, metadata=_meta(_CAT_TEST))  # sample rate [Hz]
+    buffer_size: int = field(default=8192, metadata=_meta(_CAT_TEST))
+    invalid_pins: list[int] = field(
+        default_factory=_default_invalid_pins, metadata=_meta(_CAT_TEST)
+    )
+    file_prefix: str = field(default="test", metadata=_meta(_CAT_TEST))
 
 
 @dataclass
 class ResistanceSettings(_SettingsMixin):
     """Settings for the DC-resistance / short detection (``measure_resistance``)."""
 
-    n_rounds: int = 1
-    f_sample: float = 1e5  # scope sample rate [Hz]
-    buffer_size: int = 8192
-    amplitude: float = 1.5  # applied V_IN [V]
-    n_samples_for_avg: int = 100  # samples averaged for steady-state current
-    r_short: float = 10.0  # below this [Ohm] -> flagged shorted
-    r_high_imp: float = 1e6  # above this [Ohm] -> flagged high impedance
-    file_prefix: str = "test"
-    invalid_pins: list[int] = field(default_factory=_default_invalid_pins)
+    # --- Testing ---
+    n_rounds: int = field(default=1, metadata=_meta(_CAT_TEST))
+    f_sample: float = field(default=1e5, metadata=_meta(_CAT_TEST))  # sample rate [Hz]
+    buffer_size: int = field(default=8192, metadata=_meta(_CAT_TEST))
+    amplitude: float = field(default=1.5, metadata=_meta(_CAT_TEST))  # applied V_IN [V]
+    invalid_pins: list[int] = field(
+        default_factory=_default_invalid_pins, metadata=_meta(_CAT_TEST)
+    )
+    file_prefix: str = field(default="test", metadata=_meta(_CAT_TEST))
+
+    # --- Digital processing ---
+    n_samples_for_avg: int = field(  # samples averaged for steady-state current
+        default=100, metadata=_meta(_CAT_DSP)
+    )
+
+    # --- Detection thresholds ---
+    r_short: float = field(default=10.0, metadata=_meta(_CAT_THRESH))  # <= -> shorted [Ohm]
+    r_high_imp: float = field(default=1e6, metadata=_meta(_CAT_THRESH))  # >= -> high-Z [Ohm]
+
+    # --- Trigger (default: current channel Ch2 @ trigger_level) ---
+    trigger_source: str = field(default="current", metadata=_meta(_CAT_TRIG, _TRIGGER_SOURCES))
+    trigger_level: float = field(default=0.4, metadata=_meta(_CAT_TRIG))  # trigger level [V]
+    trigger_slope: str = field(default="rising", metadata=_meta(_CAT_TRIG, _TRIGGER_SLOPES))
+    trigger_timeout: float = field(default=2.0, metadata=_meta(_CAT_TRIG))  # [s]; <=0 forever
 
 
 # measurement key (== script stem) -> settings dataclass

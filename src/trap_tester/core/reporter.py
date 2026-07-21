@@ -51,6 +51,22 @@ class Gate(Protocol):
     def wait_continue(self, prompt: str) -> None:
         """Block until the operator acknowledges (e.g. after switching connector)."""
 
+    # ---- free-run (live scope) session -------------------------------------
+    # Used when a capture never triggers: the measurement enters a live,
+    # untriggered "scope mode" for inspection that runs until the operator ends
+    # it, without recording anything for the point.
+    def begin_freerun(self, prompt: str) -> None:
+        """Announce that free-run (scope) mode has started (show its controls)."""
+
+    def freerun_capture_due(self) -> bool:
+        """Whether the loop should grab a fresh frame now (False while frozen)."""
+
+    def freerun_done(self) -> bool:
+        """Whether the operator has ended free-run (pressed Continue)."""
+
+    def end_freerun(self) -> None:
+        """Announce that free-run mode has ended (hide its controls)."""
+
 
 class ConsoleReporter:
     """Reporter that prints to stdout. Handy for CLI runs and debugging."""
@@ -92,6 +108,19 @@ class AutoGate:
         return self._retake
 
     def wait_continue(self, prompt: str) -> None:
+        return None
+
+    # free-run: grab exactly one frame (for debug) then end immediately
+    def begin_freerun(self, prompt: str) -> None:
+        return None
+
+    def freerun_capture_due(self) -> bool:
+        return True
+
+    def freerun_done(self) -> bool:
+        return True
+
+    def end_freerun(self) -> None:
         return None
 
 

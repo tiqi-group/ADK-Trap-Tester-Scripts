@@ -43,11 +43,17 @@ class QtReporter(QObject):
 class QtGate(QObject):
     confirmRequested = Signal(str)
     continueRequested = Signal(str)
+    freerunRequested = Signal(str)  # enter live free-run (scope) mode
+    freerunEnded = Signal()  # leave free-run mode (hide its controls)
 
     def __init__(self) -> None:
         super().__init__()
         self._event = threading.Event()
         self._answer = False
+        # free-run session state (polled by the worker, set from the UI thread)
+        self._freerun_done = threading.Event()
+        self._freerun_frozen = False
+        self._freerun_grab = False
 
     # ---- called on the WORKER thread (block until UI resolves) -------------
     def confirm(self, prompt: str) -> bool:
@@ -62,6 +68,27 @@ class QtGate(QObject):
         self.continueRequested.emit(prompt)
         self._event.wait()
 
+    # ---- free-run: called on the WORKER thread (non-blocking, polled) ------
+    def begin_freerun(self, prompt: str) -> None:
+        self._freerun_done.clear()
+        self._freerun_frozen = False
+        self._freerun_grab = False
+        self.freerunRequested.emit(prompt)
+
+    def freerun_capture_due(self) -> bool:
+        if not self._freerun_frozen:
+            return True
+        if self._freerun_grab:  # a fresh frame was just requested via "Single"
+            self._freerun_grab = False
+            return True
+        return False
+
+    def freerun_done(self) -> bool:
+        return self._freerun_done.is_set()
+
+    def end_freerun(self) -> None:
+        self.freerunEnded.emit()
+
     # ---- called on the UI thread ------------------------------------------
     def resolve_confirm(self, retake: bool) -> None:
         self._answer = bool(retake)
@@ -70,10 +97,23 @@ class QtGate(QObject):
     def resolve_continue(self) -> None:
         self._event.set()
 
+    def freerun_toggle_freeze(self) -> None:
+        """'Single': freeze on a fresh frame, or resume live if already frozen."""
+        if self._freerun_frozen:
+            self._freerun_frozen = False
+        else:
+            self._freerun_frozen = True
+            self._freerun_grab = True
+
+    def freerun_continue(self) -> None:
+        """End free-run (the point will be skipped)."""
+        self._freerun_done.set()
+
     def unblock(self) -> None:
         """Release any waiter (used on cancel/shutdown)."""
         self._answer = False
         self._event.set()
+        self._freerun_done.set()
 
 
 class MeasurementWorker(QThread):

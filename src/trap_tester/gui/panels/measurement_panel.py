@@ -148,6 +148,8 @@ class MeasurementPanel(QWidget):
         self._prompt = PromptBar()
         self._prompt.confirmed.connect(self._on_confirmed)
         self._prompt.continued.connect(self._on_continued)
+        self._prompt.freerunSingle.connect(self._on_freerun_single)
+        self._prompt.freerunContinue.connect(self._on_freerun_continue)
 
         controls = QHBoxLayout()
         self._start_btn = QPushButton("▶ Start measurement")
@@ -352,6 +354,8 @@ class MeasurementPanel(QWidget):
         self._reporter.resulted.connect(self._on_result)
         self._gate.confirmRequested.connect(self._prompt.ask_confirm)
         self._gate.continueRequested.connect(self._prompt.ask_continue)
+        self._gate.freerunRequested.connect(self._prompt.ask_freerun)
+        self._gate.freerunEnded.connect(self._prompt.reset)
 
         kind, serial = self._device_combo.currentData() or ("mock", None)
         self._worker = MeasurementWorker(
@@ -380,6 +384,14 @@ class MeasurementPanel(QWidget):
     def _on_continued(self) -> None:
         if self._gate is not None:
             self._gate.resolve_continue()
+
+    def _on_freerun_single(self) -> None:
+        if self._gate is not None:
+            self._gate.freerun_toggle_freeze()
+
+    def _on_freerun_continue(self) -> None:
+        if self._gate is not None:
+            self._gate.freerun_continue()
 
     # ---- worker callbacks --------------------------------------------------
     def _on_result(self, row: dict[str, Any]) -> None:

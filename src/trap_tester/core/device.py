@@ -93,16 +93,55 @@ class _MockScopeChannel:
         return self._data
 
 
+class _MockTrigger:
+    """Minimal stand-in for dwfpy's analog-in trigger (only auto_timeout used)."""
+
+    def __init__(self) -> None:
+        self.auto_timeout = 0.0
+
+
 class _MockScope:
     def __init__(self, device: "MockDevice") -> None:
         self._device = device
         self._channels = [_MockScopeChannel(), _MockScopeChannel()]
+        self.trigger = _MockTrigger()
+        # When True, every triggered acquisition never completes (read_status
+        # stays RUNNING), so ``triggered_capture`` times out — exercises the
+        # no-trigger / free-run / skip path without hardware.
+        self.fail_trigger = False
+        self._fail_countdown = 0  # fail this many upcoming triggered acquisitions
+        self._acq_failing = False
+        # The trigger mode last set via setup_edge_trigger, and the mode recorded
+        # at the start of each triggered acquisition. The mock does not model
+        # trigger-dependent data, but exposing this lets tests assert that no
+        # real capture ran while the scope was still in "auto" (free-run) mode.
+        self._trigger_mode = "normal"
+        self.capture_modes: list[str] = []
 
     def __getitem__(self, idx: int) -> _MockScopeChannel:
         return self._channels[idx]
 
-    def setup_edge_trigger(self, **_: Any) -> None:
-        pass
+    def fail_next_triggers(self, n: int) -> None:
+        """Make the next ``n`` triggered acquisitions time out (then succeed)."""
+        self._fail_countdown = int(n)
+
+    def setup_edge_trigger(self, mode: str | None = None, **_: Any) -> None:
+        if mode is not None:
+            self._trigger_mode = mode
+
+    def configure(self, reconfigure: bool = False, start: bool = False) -> None:
+        # data is synthesised in single()/record(); arming just records the mode
+        if start:
+            self.capture_modes.append(self._trigger_mode)
+            if self._fail_countdown > 0:
+                self._fail_countdown -= 1
+                self._acq_failing = True
+            else:
+                self._acq_failing = False
+
+    def read_status(self, read_data: bool = False) -> str:
+        """DONE, unless ``fail_trigger`` / a countdown simulates a missing trigger."""
+        return "RUNNING" if (self.fail_trigger or self._acq_failing) else "DONE"
 
     def _generate(self, sample_rate: float, buffer_size: int) -> None:
         n = int(buffer_size)

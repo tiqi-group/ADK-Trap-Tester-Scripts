@@ -13,6 +13,12 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from trap_tester.core.measurements._capture import (
+    apply_trigger,
+    free_run,
+    resolve_trigger,
+    triggered_capture,
+)
 from trap_tester.core.reporter import MeasurementContext
 from trap_tester.core.settings import ResistanceSettings, save_result
 from trap_tester.utils import (
@@ -54,10 +60,28 @@ def _init_device(device: Any) -> tuple[Any, Any, Any]:
     scope = device.analog_input
     scope[0].setup(range=5.0)
     scope[1].setup(range=5.0)
-    scope.setup_edge_trigger(
-        mode="normal", channel=1, slope="rising", level=0.4, hysteresis=0.01
-    )
     return io, device.analog_output, scope
+
+
+def _skip_row(scope, ctx: MeasurementContext, s: ResistanceSettings, k: int, pin: int, status: str):
+    """Debug a no-trigger (live free-run), then return a skipped-point row (R=-1)."""
+    if status == "timeout":
+        ctx.report.log(
+            f"No trigger within {s.trigger_timeout:g} s (round {k}, pin {pin}) — "
+            "entering free-run (scope) mode. Inspect the signal, then press Continue."
+        )
+        prompt = (
+            f"No trigger — round {k}, pin {pin}. Free-running (scope mode): "
+            "'Single' freezes a frame, 'Continue' skips this point."
+        )
+        free_run(
+            scope, ctx, sample_rate=s.f_sample, buffer_size=s.buffer_size, prompt=prompt,
+            publish=lambda: ctx.report.capture(
+                scope[0].get_data(), scope[1].get_data(), s.f_sample
+            ),
+        )
+    ctx.report.log(f"Round {k}, pin {pin}: no trigger — skipping (R=-1)")
+    return dict(zip(_COLUMNS, [k, pin, -1.0, False, False]))
 
 
 def _estimate_pin(s: ResistanceSettings, i_meas: np.ndarray, v_meas: np.ndarray) -> dict:
@@ -88,6 +112,8 @@ def run_resistance_measurement(ctx: MeasurementContext) -> pd.DataFrame:
         offset=0.5 * s.amplitude / GAIN_FRONTEND,
         amplitude=0.5 * s.amplitude / GAIN_FRONTEND, start=True,
     )
+    # trigger on the configured channel (current Ch2 @ 0.4 V by default)
+    ch, level, slope = resolve_trigger(s)
 
     results: list[dict[str, Any]] = []
     k = 0
@@ -104,10 +130,20 @@ def run_resistance_measurement(ctx: MeasurementContext) -> pd.DataFrame:
             ctx.report.status(f"Round {k + 1}/{s.n_rounds} — pin {pin}")
             set_dac(io, pin)
             set_adc(io, pin)
-            scope.single(
-                sample_rate=s.f_sample, buffer_size=s.buffer_size, configure=True,
-                start=True,
+            # Re-establish the normal-mode trigger every pin: a no-trigger
+            # free-run leaves the scope in auto mode, which would make every
+            # following pin auto-fire on untriggered data and read as faulty.
+            apply_trigger(scope, ch, level, slope, mode="normal", hysteresis=0.01)
+            status = triggered_capture(
+                scope, ctx, sample_rate=s.f_sample, buffer_size=s.buffer_size,
+                timeout=s.trigger_timeout,
             )
+            if status != "done":
+                row = _skip_row(scope, ctx, s, k, pin, status)
+                round_rows.append(row)
+                ctx.report.result(row)
+                continue
+
             i_meas = np.asarray(scope[1].get_data(), dtype=float) / (R_SENSE * SENSE_MAG)
             v_meas = np.asarray(scope[0].get_data(), dtype=float)
             ctx.report.capture(scope[0].get_data(), scope[1].get_data(), s.f_sample)
