@@ -1,35 +1,36 @@
-"""Build the HAWK_GEN1 bond-finger layout from its PCB coordinates + mapping.
+"""Build a bond-finger ring layout from PCB coordinates + a pad→DSUB mapping.
 
-The chip-carrier PCB fans out to a ring of 352 bond fingers around the die. Two
-local (proprietary) sources describe it:
+A chip carrier fans out to a ring of bond fingers around the die. Two local
+(un-tracked, device-specific) sources describe one carrier:
 
-* ``bondfinger_fp.json`` — ``{finger: [x, y, rot]}`` in mm, extracted from the
-  KiCad PCB (``bondfinger_coordinates.py``): each finger's centre and rotation;
-* ``bondpad_mapping.csv`` — ``Bondfinger, DSUB Connector, DSUB-Pin``: the
-  (0-indexed) DSUB connector + pin each finger routes to.
+* a coordinates JSON — ``{finger: [x, y, rot]}`` in mm, exported from the PCB:
+  each finger's centre and rotation;
+* a mapping CSV — ``Bondfinger, DSUB Connector, DSUB-Pin``: the (0-indexed) DSUB
+  connector + pin each finger routes to.
 
 Each finger becomes a small square :class:`Slot` at its PCB position, stamped
 with its canonical ``channel`` (the ``mux_mapping`` signal) so it correlates with
 the DSUB / FPC / interposer layouts. The squares are sized below the finger pitch
-so they never overlap. KiCad y grows downward, so y is negated to draw a top
-view. Run ``python -m trap_tester.core.layout.bondfinger`` to generate
-``HAWK_GEN1_Bondfinger.json`` into the user layout store (it embeds the mapping,
-so it is never tracked).
+so they never overlap. PCB y grows downward, so y is negated to draw a top view.
+Run ``python -m trap_tester.core.layout.bondfinger <coords.json> <mapping.csv>``
+to generate the layout JSON into the user layout store (it embeds the mapping, so
+it is never tracked).
 """
 
 from __future__ import annotations
 
 import csv
 import json
+import sys
 from pathlib import Path
 
 from trap_tester.core.layout.interface import InterfaceLayout, Slot
 from trap_tester.core.layout.store import ensure_user_layouts_dir
 from trap_tester.mux_mapping import dsub_to_signal
 
-NAME = "HAWK_GEN1_Bondfinger"
-# half-side of a finger's square pad (mm). Fingers sit ~0.21 mm apart, so keep
-# this below ~0.10 to leave a gap between squares.
+NAME = "Bondfinger"
+# half-side of a finger's square pad (mm). Fingers sit close together, so keep
+# this small enough to leave a gap between adjacent squares.
 FINGER_R = 0.09
 _NO_CONNECTOR = -1  # a finger that routes nowhere
 
@@ -41,7 +42,7 @@ def build_bondfinger(
 ) -> InterfaceLayout:
     """Assemble the bond-finger layout.
 
-    ``positions`` is ``{finger: (x, y, rot)}`` (mm, KiCad orientation);
+    ``positions`` is ``{finger: (x, y, rot)}`` (mm, PCB orientation);
     ``mapping`` is ``{finger: (connector, pin)}``. Every finger is drawn; those
     absent from ``mapping`` route nowhere (no channel, faint).
     """
@@ -52,7 +53,7 @@ def build_bondfinger(
         connector, pin = cp if cp is not None else (_NO_CONNECTOR, finger)
         channel = dsub_to_signal.get(pin) if cp is not None else None
         slots.append(Slot(
-            connector=connector, pin=pin, x=float(x), y=-float(y),  # KiCad y is down
+            connector=connector, pin=pin, x=float(x), y=-float(y),  # PCB y is down
             r=FINGER_R, shape="rect", channel=channel, label="",
         ))
     return InterfaceLayout(
@@ -73,10 +74,12 @@ def generate_bondfinger(fp_path: str | Path, csv_path: str | Path) -> InterfaceL
 
 
 def _dump() -> None:
-    base = Path("docs_tmp/bondfinger")
-    layout = generate_bondfinger(
-        base / "bondfinger_fp.json", base / "bondpad_mapping.csv"
-    )
+    if len(sys.argv) != 3:  # noqa: PLR2004
+        raise SystemExit(
+            "usage: python -m trap_tester.core.layout.bondfinger "
+            "<coordinates.json> <mapping.csv>"
+        )
+    layout = generate_bondfinger(sys.argv[1], sys.argv[2])
     out = ensure_user_layouts_dir() / f"{NAME}.json"
     layout.save_json(out)
     print(f"wrote {out} ({len(layout.slots)} fingers)")

@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 )
 
 from trap_tester.core.layout import Circle, Drawing, Line, Polyline, Rect, Text
-from trap_tester.core.layout.flavor import FLAVOR_INFO
+from trap_tester.core.layout.decoration import DECORATION_INFO
 
 if TYPE_CHECKING:
     from trap_tester.core.layout.interface import PinMark
@@ -230,16 +230,16 @@ class LayoutCanvas(QWidget):
     def _legend(self, drawing: Drawing) -> list[LegendItem]:
         return []
 
-    def _flavor_legend(self, drawing: Drawing) -> list[LegendItem]:
-        """Legend entries for the fixed-colour flavor pads in the background.
+    def _decoration_legend(self, drawing: Drawing) -> list[LegendItem]:
+        """Legend entries for the fixed-colour decoration pads in the background.
 
-        Flavor pads (GND / axialisation / …) are static background circles, so we
+        Decoration pads (GND / RF lines / …) are static background circles, so we
         recover which classes are present by matching their fill colour against
-        :data:`FLAVOR_INFO`. Shared by every layout view so all tabs agree.
+        :data:`DECORATION_INFO`. Shared by every layout view so all tabs agree.
         """
         fills = {p.fill for p in drawing.background if isinstance(p, Circle)}
         return [(label, fill, stroke)
-                for label, fill, stroke in FLAVOR_INFO.values() if fill in fills]
+                for label, fill, stroke in DECORATION_INFO.values() if fill in fills]
 
     def _render_legend(self, items: list[LegendItem]) -> None:
         """Rebuild the Qt legend strip beside the canvas from ``items``."""

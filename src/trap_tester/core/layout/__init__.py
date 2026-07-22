@@ -22,7 +22,7 @@ from trap_tester.core.layout.annotation import (
     cycle_state,
 )
 from trap_tester.core.layout.dsub50 import default_json_path, generate_dsub50
-from trap_tester.core.layout.flavor import FLAVOR_INFO, flavor_style
+from trap_tester.core.layout.decoration import DECORATION_INFO, decoration_style
 from trap_tester.core.layout.fpc import default_json_path as fpc_json_path
 from trap_tester.core.layout.fpc import generate_fpc
 from trap_tester.core.layout.interface import (
@@ -41,10 +41,16 @@ from trap_tester.core.layout.primitives import (
     primitive_from_dict,
 )
 from trap_tester.core.layout.store import (
+    add_layout_dir,
+    configured_layout_dirs,
     delete_layout,
+    env_layout_dirs,
+    extra_layout_dirs,
     import_layout,
+    layout_search_dirs,
     list_user_layouts,
     load_layout,
+    remove_layout_dir,
     user_layouts_dir,
 )
 
@@ -130,8 +136,19 @@ def layout_for(measurement: str | None, connector: int = 0) -> InterfaceLayout |
 
 
 def user_layout_options() -> list[tuple[str, str]]:
-    """Custom layouts as ``(display_name, path)`` pairs for a GUI selector."""
-    return [(p.stem, str(p)) for p in list_user_layouts()]
+    """Custom layouts as ``(display_name, path)`` pairs for a GUI selector.
+
+    When the same file name appears in more than one search folder (e.g. the
+    writable store and a private-repo folder), the display name is qualified with
+    the containing folder so the two entries can be told apart.
+    """
+    paths = list_user_layouts()
+    stems = [p.stem for p in paths]
+    dupes = {s for s in stems if stems.count(s) > 1}
+    return [
+        (f"{p.stem}  ({p.parent.name})" if p.stem in dupes else p.stem, str(p))
+        for p in paths
+    ]
 
 
 def filter_layout_connector(
@@ -176,6 +193,12 @@ __all__ = [
     "user_layout_options",
     "filter_layout_connector",
     "user_layouts_dir",
+    "configured_layout_dirs",
+    "env_layout_dirs",
+    "extra_layout_dirs",
+    "layout_search_dirs",
+    "add_layout_dir",
+    "remove_layout_dir",
     "list_user_layouts",
     "load_layout",
     "import_layout",
@@ -185,6 +208,6 @@ __all__ = [
     "AnnotationSet",
     "build_annotation_drawing",
     "cycle_state",
-    "FLAVOR_INFO",
-    "flavor_style",
+    "DECORATION_INFO",
+    "decoration_style",
 ]

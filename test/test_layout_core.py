@@ -13,7 +13,9 @@ import pytest
 from trap_tester.core import analysis as A
 from trap_tester.core.analysis._common import fpc_conductor
 from trap_tester.core.layout import (
+    add_layout_dir,
     build_drawing,
+    configured_layout_dirs,
     dsub50_layout,
     dsub50_layout_for_connector,
     filter_layout_connector,
@@ -23,8 +25,10 @@ from trap_tester.core.layout import (
     generate_fpc,
     import_layout,
     layout_for,
+    layout_search_dirs,
     list_user_layouts,
     load_layout,
+    remove_layout_dir,
     user_layout_options,
     user_layouts_dir,
 )
@@ -297,3 +301,68 @@ def test_filter_layout_connector():
     # single-connector or missing-connector layouts pass through unchanged
     assert filter_layout_connector(only2, 2) is only2
     assert filter_layout_connector(lay, 9) is lay
+
+
+# --- extra layout search folders ------------------------------------------
+
+
+def test_add_and_remove_extra_layout_dir(layout_store, tmp_path):
+    """A persisted extra folder is searched, and its layouts appear in the list."""
+    extra = tmp_path / "private-repo"
+    extra.mkdir()
+    generate_fpc().save_json(extra / "shared.json")
+
+    # not searched until it is added
+    assert list_user_layouts() == []
+    add_layout_dir(extra)
+
+    assert extra in layout_search_dirs()
+    assert [p.name for p in list_user_layouts()] == ["shared.json"]
+    assert ("shared", str(extra / "shared.json")) in user_layout_options()
+
+    # persists across calls (config file), and is removable again
+    assert configured_layout_dirs() == [extra]
+    remove_layout_dir(extra)
+    assert configured_layout_dirs() == []
+    assert list_user_layouts() == []
+
+
+def test_add_layout_dir_rejects_non_directory(layout_store, tmp_path):
+    with pytest.raises(ValueError):
+        add_layout_dir(tmp_path / "does-not-exist")
+    assert configured_layout_dirs() == []
+
+
+def test_add_layout_dir_is_idempotent_and_skips_store(layout_store, tmp_path):
+    store, _ = layout_store
+    store.mkdir(parents=True, exist_ok=True)
+    extra = tmp_path / "extra"
+    extra.mkdir()
+    add_layout_dir(extra)
+    add_layout_dir(extra)  # duplicate -> no-op
+    add_layout_dir(store)  # the writable store is already searched -> not persisted
+    assert configured_layout_dirs() == [extra]
+
+
+def test_env_var_extra_dir_is_searched(layout_store, tmp_path, monkeypatch):
+    extra = tmp_path / "from-env"
+    extra.mkdir()
+    generate_dsub50().save_json(extra / "envlayout.json")
+    monkeypatch.setenv("TRAP_TESTER_LAYOUT_PATH", str(extra))
+    assert extra in layout_search_dirs()
+    assert [p.name for p in list_user_layouts()] == ["envlayout.json"]
+
+
+def test_colliding_stems_are_disambiguated(layout_store, tmp_path):
+    store, src_dir = layout_store
+    generate_dsub50().save_json(src_dir / "dsub50.json")
+    import_layout(src_dir / "dsub50.json")  # -> store/dsub50.json
+    extra = tmp_path / "repo"
+    extra.mkdir()
+    generate_dsub50().save_json(extra / "dsub50.json")  # same stem, other folder
+    add_layout_dir(extra)
+
+    labels = [name for name, _ in user_layout_options()]
+    # both are listed, each qualified by its folder name (not a bare "dsub50")
+    assert len(labels) == 2
+    assert all("dsub50" in name and "(" in name for name in labels)

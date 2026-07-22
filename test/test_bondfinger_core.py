@@ -1,7 +1,7 @@
-"""Headless tests for the HAWK_GEN1 bond-finger layout.
+"""Headless tests for the bond-finger layout.
 
 No Qt / hardware / docs_tmp: synthetic finger data exercises the builder, the
-JSON+CSV reader, the KiCad y/rotation flip, and the channel stamping.
+JSON+CSV reader, the PCB y/rotation flip, and the channel stamping.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def test_build_bondfinger_shapes_and_flip():
     assert {s.shape for s in lay.slots} == {"rect"}  # small non-overlapping squares
     by_pin = {(s.connector, s.pin): s for s in lay.slots}
     f1 = by_pin[(6, 30)]
-    assert f1.x == 8.77 and f1.y == 6.59  # KiCad y negated for a top view
+    assert f1.x == 8.77 and f1.y == 6.59  # PCB y negated for a top view
     assert f1.channel == dsub_to_signal[30]
 
 

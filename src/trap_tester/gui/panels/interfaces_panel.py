@@ -41,6 +41,7 @@ from trap_tester.core.layout import (
     user_layouts_dir,
 )
 from trap_tester.gui.widgets.annotation_view import AnnotationView
+from trap_tester.gui.widgets.layout_folders_dialog import LayoutFoldersDialog
 
 _BUILTINS = [
     ("DSUB-50 (built-in)", "builtin:dsub50"),
@@ -91,6 +92,13 @@ class InterfacesPanel(QWidget):
         )
         self._import_btn.clicked.connect(self._import_layout)
         iface_row.addWidget(self._import_btn)
+        self._folders_btn = QPushButton("Folders…")
+        self._folders_btn.setProperty("role", "interactive")
+        self._folders_btn.setToolTip(
+            "Add folders to search for custom layouts (e.g. a private git repo)"
+        )
+        self._folders_btn.clicked.connect(self._manage_folders)
+        iface_row.addWidget(self._folders_btn)
         sel_v.addLayout(iface_row)
 
         conn_row = QHBoxLayout()
@@ -214,6 +222,13 @@ class InterfacesPanel(QWidget):
         idx = self._iface_selector.findData(str(dest))
         if idx >= 0:
             self._iface_selector.setCurrentIndex(idx)  # triggers _update_view
+
+    def _manage_folders(self) -> None:
+        dlg = LayoutFoldersDialog(self)
+        dlg.exec()
+        if dlg.changed():
+            self._refresh_interfaces()
+            self._update_view()
 
     # ---- annotation set: save / load / clear -------------------------------
     def _save(self) -> None:

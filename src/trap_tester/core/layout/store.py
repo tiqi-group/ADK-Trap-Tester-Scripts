@@ -9,15 +9,30 @@ the source tree, in a per-user data directory:
 * macOS:       ``~/Library/Application Support/trap-tester/layouts``
 * Windows:     ``%APPDATA%\\trap-tester\\layouts``
 
-Set ``TRAP_TESTER_LAYOUTS_DIR`` to override the location (e.g. a shared network
-folder, or a temp dir in tests). Every file is a plain :class:`InterfaceLayout`
-JSON — the same format as the built-in ``layouts/dsub50.json`` — so a layout
-exported from here (or hand-authored) can be dropped straight into the folder,
-or imported through the GUI, which validates and normalises it on the way in.
+Set ``TRAP_TESTER_LAYOUTS_DIR`` to override this *writable* store (e.g. a shared
+network folder, or a temp dir in tests). Every file is a plain
+:class:`InterfaceLayout` JSON — the same format as the built-in
+``layouts/dsub50.json`` — so a layout exported from here (or hand-authored) can be
+dropped straight into the folder, or imported through the GUI, which validates and
+normalises it on the way in.
+
+Beyond that single writable store, the GUI can search **extra** folders for
+layouts to *read* — handy when the custom layouts live in a shared or
+version-controlled folder (e.g. a private git repo). Extra folders come from two
+places, both searched read-only in addition to the writable store:
+
+* a persisted list, managed through the GUI (see :func:`add_layout_dir` /
+  :func:`remove_layout_dir`), stored next to the store in ``layout_sources.json``;
+* the ``TRAP_TESTER_LAYOUT_PATH`` environment variable (``os.pathsep``-separated),
+  for CI / shared setups.
+
+:func:`list_user_layouts` scans them all; imports and deletes only ever touch the
+writable store, so a version-controlled folder is never modified by the app.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 from pathlib import Path
@@ -26,6 +41,13 @@ from trap_tester.core.layout.interface import InterfaceLayout
 
 _APP_DIR = "trap-tester"
 _ENV_VAR = "TRAP_TESTER_LAYOUTS_DIR"
+_PATH_ENV_VAR = "TRAP_TESTER_LAYOUT_PATH"  # os.pathsep-separated extra read dirs
+_CONFIG_NAME = "layout_sources.json"
+
+
+def _norm(path: Path) -> str:
+    """A comparable key for a path (case-/separator-normalised, ~ expanded)."""
+    return os.path.normcase(os.path.normpath(str(Path(path).expanduser())))
 
 
 def _base_data_dir() -> Path:
@@ -54,12 +76,93 @@ def ensure_user_layouts_dir() -> Path:
     return path
 
 
-def list_user_layouts() -> list[Path]:
-    """Every ``*.json`` in the layouts dir, sorted by name (empty if none)."""
-    path = user_layouts_dir()
+def _config_path() -> Path:
+    """Where the persisted extra-folder list lives (next to the writable store)."""
+    return user_layouts_dir().parent / _CONFIG_NAME
+
+
+def configured_layout_dirs() -> list[Path]:
+    """Extra folders the user added through the GUI (persisted, may be removed)."""
+    path = _config_path()
     if not path.exists():
         return []
-    return sorted(path.glob("*.json"))
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    sources = data.get("sources", []) if isinstance(data, dict) else []
+    return [Path(s).expanduser() for s in sources if isinstance(s, str)]
+
+
+def env_layout_dirs() -> list[Path]:
+    """Extra folders from ``TRAP_TESTER_LAYOUT_PATH`` (read-only, not editable)."""
+    raw = os.environ.get(_PATH_ENV_VAR, "")
+    return [Path(p).expanduser() for p in raw.split(os.pathsep) if p.strip()]
+
+
+def extra_layout_dirs() -> list[Path]:
+    """All extra read-only search folders: persisted first, then env, deduped."""
+    out: list[Path] = []
+    seen: set[str] = set()
+    for d in [*configured_layout_dirs(), *env_layout_dirs()]:
+        key = _norm(d)
+        if key not in seen:
+            seen.add(key)
+            out.append(d)
+    return out
+
+
+def layout_search_dirs() -> list[Path]:
+    """Every folder searched for custom layouts: writable store first, then extras."""
+    out: list[Path] = []
+    seen: set[str] = set()
+    for d in [user_layouts_dir(), *extra_layout_dirs()]:
+        key = _norm(d)
+        if key not in seen:
+            seen.add(key)
+            out.append(d)
+    return out
+
+
+def _write_config_dirs(dirs: list[Path]) -> None:
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({"sources": [str(d) for d in dirs]}, indent=2))
+
+
+def add_layout_dir(path: str | Path) -> Path:
+    """Persist ``path`` as an extra search folder (idempotent). Returns its Path.
+
+    Raises :class:`ValueError` if it is not an existing directory. The writable
+    store and env-provided folders are never added to the persisted list (they are
+    already searched); adding one is a no-op.
+    """
+    p = Path(path).expanduser()
+    if not p.is_dir():
+        raise ValueError(f"{p} is not a directory")
+    already = {_norm(d) for d in [user_layouts_dir(), *env_layout_dirs()]}
+    current = configured_layout_dirs()
+    keys = {_norm(d) for d in current} | already
+    if _norm(p) not in keys:
+        current.append(p)
+        _write_config_dirs(current)
+    return p
+
+
+def remove_layout_dir(path: str | Path) -> None:
+    """Drop ``path`` from the persisted extra-folder list (no-op if absent)."""
+    key = _norm(path)
+    remaining = [d for d in configured_layout_dirs() if _norm(d) != key]
+    _write_config_dirs(remaining)
+
+
+def list_user_layouts() -> list[Path]:
+    """Every ``*.json`` across all search dirs, sorted per dir (empty if none)."""
+    out: list[Path] = []
+    for directory in layout_search_dirs():
+        if directory.exists():
+            out.extend(sorted(directory.glob("*.json")))
+    return out
 
 
 def load_layout(path: str | Path) -> InterfaceLayout:
@@ -111,6 +214,12 @@ def delete_layout(path: str | Path) -> None:
 __all__ = [
     "user_layouts_dir",
     "ensure_user_layouts_dir",
+    "configured_layout_dirs",
+    "env_layout_dirs",
+    "extra_layout_dirs",
+    "layout_search_dirs",
+    "add_layout_dir",
+    "remove_layout_dir",
     "list_user_layouts",
     "load_layout",
     "import_layout",

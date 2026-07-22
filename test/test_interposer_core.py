@@ -1,15 +1,15 @@
 """Headless tests for the interposer layout + multi-connector annotation.
 
 No Qt, no hardware, and no dependency on the (un-tracked) docs_tmp sources:
-synthetic pad data exercises the builder, the CSV/GND/flavor reader, the
-measured-vs-flavor split, and the fact that a multi-connector layout is drawn
+synthetic pad data exercises the builder, the CSV/GND/decoration reader, the
+measured-vs-decoration split, and the fact that a multi-connector layout is drawn
 whole with each pad annotated per its own connector.
 """
 
 from __future__ import annotations
 
 from trap_tester.core.layout import AnnotationSet, build_annotation_drawing
-from trap_tester.core.layout.flavor import FLAVOR_INFO
+from trap_tester.core.layout.decoration import DECORATION_INFO
 from trap_tester.core.layout.interface import InterfaceLayout, Slot
 from trap_tester.core.layout.interposer import build_interposer, generate_interposer
 from trap_tester.core.layout.primitives import Circle
@@ -18,21 +18,21 @@ from trap_tester.mux_mapping import dsub_to_signal
 # A1->(0,3)  B1->(3,3)  A2->(0,37)  C5->(1,16) ; GND D1, D2. Max row = 5.
 _MAPPING = [("A1", 0, 3), ("B1", 3, 3), ("A2", 0, 37), ("C5", 1, 16)]
 _GND = ["D1", "D2"]
-# E1 is a pure-flavor axialisation pad; A1 is *also* a signal pad -> stays a slot.
-_FLAVOR = [("E1", "axialisation"), ("A1", "loopback")]
+# E1 is a pure-decoration RF-lines pad; A1 is *also* a signal pad -> stays a slot.
+_DECORATION = [("E1", "rf_lines"), ("A1", "loopback")]
 
 
 def _circles(layout: InterfaceLayout) -> list[Circle]:
     return [p for p in layout.background if isinstance(p, Circle)]
 
 
-def test_signal_pads_are_slots_flavor_is_background():
-    lay = build_interposer(_MAPPING, _GND, _FLAVOR)
+def test_signal_pads_are_slots_decoration_is_background():
+    lay = build_interposer(_MAPPING, _GND, _DECORATION)
     assert lay.key_by == "dsub_pin"
     # only the 4 signal pads are measurable slots
     assert len(lay.slots) == 4
     assert all(s.channel is not None for s in lay.slots)
-    # GND (2) + axialisation E1 (1) are flavor circles; A1-loopback skipped (signal)
+    # GND (2) + RF-lines E1 (1) are decoration circles; A1-loopback skipped (signal)
     assert len(_circles(lay)) == 3
 
 
@@ -47,17 +47,17 @@ def test_signal_positions_and_row1_at_top():
     assert a2.pin == 37 and a1.y > a2.y  # row 1 above row 2
 
 
-def test_flavor_circles_use_pdf_colours():
-    lay = build_interposer(_MAPPING, _GND, _FLAVOR)
+def test_decoration_circles_use_pdf_colours():
+    lay = build_interposer(_MAPPING, _GND, _DECORATION)
     fills = {c.fill for c in _circles(lay)}
-    assert FLAVOR_INFO["gnd"][1] in fills          # GND blue
-    assert FLAVOR_INFO["axialisation"][1] in fills  # axialisation green
+    assert DECORATION_INFO["gnd"][1] in fills          # GND blue
+    assert DECORATION_INFO["rf_lines"][1] in fills  # RF lines green
     # A1 is a signal pad, so no loopback (cyan) circle was added for it
-    assert FLAVOR_INFO["loopback"][1] not in fills
+    assert DECORATION_INFO["loopback"][1] not in fills
 
 
-def test_flavor_pad_that_is_also_signal_stays_a_slot():
-    lay = build_interposer(_MAPPING, _GND, _FLAVOR)
+def test_decoration_pad_that_is_also_signal_stays_a_slot():
+    lay = build_interposer(_MAPPING, _GND, _DECORATION)
     a1_slots = [s for s in lay.slots if (s.x, s.y) == (0.0, 4.0)]
     assert len(a1_slots) == 1 and a1_slots[0].channel is not None
 
@@ -96,13 +96,13 @@ def test_generate_interposer_reads_all_sources(tmp_path):
         "LGA pad,DSUB connector,DSUB-Pin\nA1,0,3\nB1,3,3\nA2,0,37\nC5,1,16\n"
     )
     (tmp_path / "gnd.txt").write_text("D1\nD2\n\n")
-    (tmp_path / "flavor.csv").write_text("LGA pad,type\nE1,axialisation\nZ9,loopback\n")
+    (tmp_path / "decoration.csv").write_text("LGA pad,type\nE1,rf_lines\nZ9,loopback\n")
     lay = generate_interposer(
-        tmp_path / "map.csv", tmp_path / "gnd.txt", tmp_path / "flavor.csv"
+        tmp_path / "map.csv", tmp_path / "gnd.txt", tmp_path / "decoration.csv"
     )
     assert isinstance(lay, InterfaceLayout)
     assert len(lay.slots) == 4  # signal only
-    assert len(_circles(lay)) == 4  # 2 GND + axialisation + loopback
-    # flavor CSV is optional
+    assert len(_circles(lay)) == 4  # 2 GND + RF lines + loopback
+    # decoration CSV is optional
     lay2 = generate_interposer(tmp_path / "map.csv", tmp_path / "gnd.txt")
     assert len(_circles(lay2)) == 2  # just the GND pads

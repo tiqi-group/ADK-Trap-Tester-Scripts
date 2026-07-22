@@ -96,4 +96,4 @@ class AnnotationView(LayoutCanvas):
             items.append(("No data", CLEAR_FILL, CLEAR_STROKE))
         if "unmapped" in present:
             items.append(("GND / shield", GND_FILL, GND_STROKE))
-        return items + self._flavor_legend(drawing)
+        return items + self._decoration_legend(drawing)

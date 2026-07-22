@@ -35,6 +35,7 @@ from trap_tester.core.layout import (
 )
 from trap_tester.core.layout.interface import UNMEASURED_FILL, UNMEASURED_STROKE
 from trap_tester.gui.widgets.layout_canvas import LayoutCanvas, LegendItem
+from trap_tester.gui.widgets.layout_folders_dialog import LayoutFoldersDialog
 
 
 class ConnectorView(LayoutCanvas):
@@ -81,6 +82,11 @@ class ConnectorView(LayoutCanvas):
         )
         self._import_btn.clicked.connect(self._import_layout)
         controls_l.addWidget(self._import_btn)
+        self._folders_btn = QPushButton("Folders…")
+        self._folders_btn.setProperty("role", "interactive")
+        self._folders_btn.setToolTip("Add folders to search for custom layouts")
+        self._folders_btn.clicked.connect(self._manage_folders)
+        controls_l.addWidget(self._folders_btn)
 
         self.add_control(controls)  # into LayoutCanvas's controls bar
         self._refresh_layouts()
@@ -151,7 +157,7 @@ class ConnectorView(LayoutCanvas):
         ]
         if "unmeasured" in present:
             items.append(("No data", UNMEASURED_FILL, UNMEASURED_STROKE))
-        return items + self._flavor_legend(drawing)
+        return items + self._decoration_legend(drawing)
 
     # ---- layout selection / import -----------------------------------------
     def _selected_layout(self, connector: int) -> InterfaceLayout | None:
@@ -221,3 +227,9 @@ class ConnectorView(LayoutCanvas):
         idx = self._layout_selector.findData(str(dest))
         if idx >= 0:
             self._layout_selector.setCurrentIndex(idx)  # triggers a re-render
+
+    def _manage_folders(self) -> None:
+        dlg = LayoutFoldersDialog(self)
+        dlg.exec()
+        if dlg.changed():
+            self._refresh_layouts()

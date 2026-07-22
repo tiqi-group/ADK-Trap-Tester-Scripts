@@ -1,8 +1,7 @@
-"""Build an interposer (LGA) layout from its pad→DSUB mapping.
+"""Build an interposer (LGA) layout from a pad→DSUB mapping.
 
-The interposer is a land-grid-array whose pads fan out to several DSUB
-connectors. Two sources describe it (both local, un-tracked — the verified
-mapping is proprietary):
+An interposer land-grid-array fans out to several DSUB connectors. Two local
+(un-tracked, device-specific) sources describe one interposer:
 
 * a mapping CSV ``LGA pad, DSUB connector, DSUB-Pin`` — every signal pad and the
   (0-indexed) DSUB connector + pin it routes to;
@@ -12,25 +11,25 @@ A pad name is a spreadsheet-style grid coordinate: column letter(s) + row number
 (``N7`` = column N, row 7), which gives the pad its position. Signal pads become
 measurable :class:`Slot` s stamped with their canonical ``channel`` (the
 ``mux_mapping`` signal) so the interposer correlates with the DSUB / FPC layouts.
-The non-measured pads — GND, plus optional axialisation / loopback /
-sensor_heater "flavor" pads read from the signal-type PDF — are drawn as
-fixed-colour background circles that never react to measurement data (echoing the
-PDF for orientation).
+The non-measured pads — GND, plus optional rf_lines / loopback /
+sensor_heater "decoration" pads — are drawn as fixed-colour background circles that
+never react to measurement data.
 
 Because the interposer spans several connectors, its :class:`InterfaceLayout` is
 drawn *whole* — every pad keeps its own ``connector`` — and matched/annotated per
-``(connector, pin|channel)``. Run ``python -m trap_tester.core.layout.interposer``
-to generate ``interposer.json`` into the user layout store (it embeds the
-verified mapping, so it is never tracked in the repo).
+``(connector, pin|channel)``. Run ``python -m trap_tester.core.layout.interposer
+<mapping.csv> <gnd.txt> [decoration.csv]`` to generate the layout JSON into the user
+layout store (it embeds the mapping, so it is never tracked in the repo).
 """
 
 from __future__ import annotations
 
 import csv
 import re
+import sys
 from pathlib import Path
 
-from trap_tester.core.layout.flavor import flavor_style
+from trap_tester.core.layout.decoration import decoration_style
 from trap_tester.core.layout.interface import InterfaceLayout, Slot
 from trap_tester.core.layout.primitives import Circle, Text
 from trap_tester.core.layout.store import ensure_user_layouts_dir
@@ -58,29 +57,29 @@ def _parse_pad(pad: str) -> tuple[str, int]:
 def build_interposer(
     mapping: list[tuple[str, int, int]],
     gnd_pads: list[str],
-    flavor: list[tuple[str, str]] | None = None,
-    name: str = "Interposer (signal-type v1.0)",
+    decoration: list[tuple[str, str]] | None = None,
+    name: str = "Interposer",
 ) -> InterfaceLayout:
     """Assemble the interposer layout from parsed pad data.
 
     ``mapping`` is ``(pad, connector, pin)`` per *signal* pad — these become the
-    measured/annotatable :class:`Slot` s. ``gnd_pads`` and ``flavor``
-    (``(pad, type)`` for axialisation / loopback / sensor_heater) are non-measured
-    pads drawn as fixed-colour background circles — "flavor" that mirrors the PDF
-    and never reacts to measurement data. A flavor pad that is also a signal pad
-    stays a signal slot (its type is ignored). Positions come from the pad grid
-    coordinate; row 1 is drawn at the top.
+    measured/annotatable :class:`Slot` s. ``gnd_pads`` and ``decoration``
+    (``(pad, type)`` for rf_lines / loopback / sensor_heater) are non-measured
+    pads drawn as fixed-colour background circles — "decoration" that never reacts to
+    measurement data. A decoration pad that is also a signal pad stays a signal slot
+    (its type is ignored). Positions come from the pad grid coordinate; row 1 is
+    drawn at the top.
     """
     signal_names = {p for (p, _c, _pin) in mapping}
     parsed_signal = [(_parse_pad(p), int(c), int(pin)) for (p, c, pin) in mapping]
 
-    flavor_all: list[tuple[str, str]] = [(p, "gnd") for p in gnd_pads]
-    flavor_all += list(flavor or [])
-    parsed_flavor = [
-        (_parse_pad(p), t) for (p, t) in flavor_all if p not in signal_names
+    decoration_all: list[tuple[str, str]] = [(p, "gnd") for p in gnd_pads]
+    decoration_all += list(decoration or [])
+    parsed_decoration = [
+        (_parse_pad(p), t) for (p, t) in decoration_all if p not in signal_names
     ]
 
-    all_rows = [rc[0][1] for rc in parsed_signal] + [rc[0][1] for rc in parsed_flavor]
+    all_rows = [rc[0][1] for rc in parsed_signal] + [rc[0][1] for rc in parsed_decoration]
     n_rows = max(all_rows) if all_rows else 1
 
     def _x(letters: str) -> float:
@@ -96,11 +95,11 @@ def build_interposer(
     ]
     circles = [
         Circle(x=_x(letters), y=_y(row), r=PAD_R, width=0.8,
-               fill=flavor_style(t)[0], stroke=flavor_style(t)[1])
-        for (letters, row), t in parsed_flavor
+               fill=decoration_style(t)[0], stroke=decoration_style(t)[1])
+        for (letters, row), t in parsed_decoration
     ]
 
-    coords = [rc[0] for rc in parsed_signal] + [rc[0] for rc in parsed_flavor]
+    coords = [rc[0] for rc in parsed_signal] + [rc[0] for rc in parsed_decoration]
     background = [*circles, *_grid_labels(coords, n_rows)]
     return InterfaceLayout(
         name=name, units="grid", key_by="dsub_pin",
@@ -128,13 +127,12 @@ def _grid_labels(coords: list[tuple[str, int]], n_rows: int) -> list[Text]:
 def generate_interposer(
     csv_path: str | Path,
     gnd_path: str | Path,
-    flavor_path: str | Path | None = None,
+    decoration_path: str | Path | None = None,
 ) -> InterfaceLayout:
-    """Read the mapping CSV + GND list (+ optional flavor CSV) and build the layout.
+    """Read the mapping CSV + GND list (+ optional decoration CSV) and build the layout.
 
-    ``flavor_path`` is a ``LGA pad,type`` CSV (types: axialisation / loopback /
-    sensor_heater), typically extracted from the signal-type PDF. If absent, only
-    signal + GND pads are drawn.
+    ``decoration_path`` is a ``LGA pad,type`` CSV (types: rf_lines / loopback /
+    sensor_heater). If absent, only signal + GND pads are drawn.
     """
     with Path(csv_path).open(newline="") as fh:
         mapping: list[tuple[str, int, int]] = [
@@ -143,24 +141,25 @@ def generate_interposer(
         ]
     gnd = [ln.strip() for ln in Path(gnd_path).read_text().splitlines() if ln.strip()]
 
-    flavor: list[tuple[str, str]] | None = None
-    if flavor_path is not None and Path(flavor_path).exists():
-        with Path(flavor_path).open(newline="") as fh:
-            flavor = [(row["LGA pad"], row["type"]) for row in csv.DictReader(fh)]
-    return build_interposer(mapping, gnd, flavor)
+    decoration: list[tuple[str, str]] | None = None
+    if decoration_path is not None and Path(decoration_path).exists():
+        with Path(decoration_path).open(newline="") as fh:
+            decoration = [(row["LGA pad"], row["type"]) for row in csv.DictReader(fh)]
+    return build_interposer(mapping, gnd, decoration)
 
 
 def _dump() -> None:
-    base = Path("docs_tmp")
-    layout = generate_interposer(
-        base / "interposer_mapping.csv",
-        base / "filter_gnd.txt",
-        base / "interposer_flavor.csv",
-    )
+    if len(sys.argv) < 3:  # noqa: PLR2004
+        raise SystemExit(
+            "usage: python -m trap_tester.core.layout.interposer "
+            "<mapping.csv> <gnd.txt> [decoration.csv]"
+        )
+    decoration_path = sys.argv[3] if len(sys.argv) > 3 else None  # noqa: PLR2004
+    layout = generate_interposer(sys.argv[1], sys.argv[2], decoration_path)
     out = ensure_user_layouts_dir() / "interposer.json"
     layout.save_json(out)
-    n_flavor = sum(isinstance(p, Circle) for p in layout.background)
-    print(f"wrote {out} ({len(layout.slots)} signal + {n_flavor} flavor pads)")
+    n_decoration = sum(isinstance(p, Circle) for p in layout.background)
+    print(f"wrote {out} ({len(layout.slots)} signal + {n_decoration} decoration pads)")
 
 
 if __name__ == "__main__":
