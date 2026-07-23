@@ -26,6 +26,12 @@ def _circles(layout: InterfaceLayout) -> list[Circle]:
     return [p for p in layout.background if isinstance(p, Circle)]
 
 
+def test_signal_slots_carry_pad_ident():
+    # each signal slot records its LGA pad name as the cross-interface ident
+    lay = build_interposer(_MAPPING, _GND)
+    assert {s.ident for s in lay.slots} == {"A1", "B1", "A2", "C5"}
+
+
 def test_signal_pads_are_slots_decoration_is_background():
     lay = build_interposer(_MAPPING, _GND, _DECORATION)
     assert lay.key_by == "dsub_pin"

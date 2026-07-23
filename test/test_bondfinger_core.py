@@ -21,6 +21,12 @@ _POS = {1: (8.77, -6.59, 135.0), 2: (9.07, -6.53, 133.9), 3: (1.0, 2.0, 90.0)}
 _MAP = {1: (6, 30), 2: (5, 40)}
 
 
+def test_slots_carry_finger_ident():
+    # each finger slot records its bond-finger number as the cross-interface ident
+    lay = build_bondfinger(_POS, _MAP)
+    assert {s.ident for s in lay.slots} == {"1", "2", "3"}
+
+
 def test_build_bondfinger_shapes_and_flip():
     lay = build_bondfinger(_POS, _MAP)
     assert lay.key_by == "dsub_pin"

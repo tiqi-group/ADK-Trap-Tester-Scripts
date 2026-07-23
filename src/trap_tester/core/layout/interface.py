@@ -122,6 +122,13 @@ class Slot:
     other purely from the JSON, with no runtime pin↔conductor lookup. ``None``
     for slots that map to no channel (a GND / spare / unconnected contact).
 
+    ``ident`` is this interface's own per-net identifier — the LGA pad name, bond
+    finger number or electrode name that a cross-interface *mapping* CSV lists in
+    the column named after this layout. It is what lets a setup-specific mapping
+    re-wire the slot (see :mod:`trap_tester.core.layout.mapping`); ``None`` for the
+    reference ``(connector, pin)`` interfaces (DSUB-50 / FPC) that a mapping matches
+    by connector and pin instead.
+
     A slot is ONE logical pad with ONE measurement identity, but may be *drawn*
     as several primitives — an ion-trap electrode net is several polygons on the
     one ``(connector, pin)``. ``shapes`` holds that geometry; when empty the slot
@@ -139,6 +146,7 @@ class Slot:
     shape: str = "circle"  # circle | rect | finger | poly
     channel: int | None = None  # canonical mux signal; None = unmapped
     label: str | None = None  # in-shape text; None -> str(pin). "" hides it.
+    ident: str | None = None  # per-interface identifier (LGA pad / finger / electrode)
     shapes: list[SlotShape] = field(default_factory=list)  # empty -> single shape
 
     @property
@@ -165,6 +173,8 @@ class Slot:
             "channel": self.channel,
             "label": self.label,
         }
+        if self.ident is not None:
+            data["ident"] = self.ident
         if self.shapes:
             data["shapes"] = [s.to_dict() for s in self.shapes]
         return data
@@ -173,6 +183,7 @@ class Slot:
     def from_dict(cls, data: dict[str, Any]) -> Slot:
         raw_channel = data.get("channel")
         raw_label = data.get("label")
+        raw_ident = data.get("ident")
         raw_shapes = data.get("shapes")
         return cls(
             connector=int(data["connector"]),
@@ -184,6 +195,7 @@ class Slot:
             shape=str(data.get("shape", "circle")),
             channel=None if raw_channel is None else int(raw_channel),
             label=None if raw_label is None else str(raw_label),
+            ident=None if raw_ident is None else str(raw_ident),
             shapes=[SlotShape.from_dict(s) for s in raw_shapes] if raw_shapes else [],
         )
 
@@ -242,6 +254,7 @@ class PinMark:
     message: str  # full finding text, shown on hover
     measured: bool
     channel: int | None = None  # canonical channel; lets a click resolve identity
+    ident: str | None = None  # per-interface identifier (LGA pad / finger / electrode)
     rot: float = 0.0  # degrees; orients an elongated "finger" shape
     points: list[list[float]] | None = None  # outline when shape == "poly"
 
@@ -271,7 +284,7 @@ def slot_pins(
                 connector=slot.connector, pin=slot.pin, status=status,
                 fill=fill, stroke=stroke, label=lbl if i == 0 else "",
                 message=message, measured=measured, channel=slot.channel,
-                rot=sh.rot, points=sh.points,
+                ident=slot.ident, rot=sh.rot, points=sh.points,
             )
         )
     return marks

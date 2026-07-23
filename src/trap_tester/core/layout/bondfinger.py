@@ -55,6 +55,7 @@ def build_bondfinger(
         slots.append(Slot(
             connector=connector, pin=pin, x=float(x), y=-float(y),  # PCB y is down
             r=FINGER_R, shape="rect", channel=channel, label="",
+            ident=str(finger),  # the bond-finger number, this layout's mapping key
         ))
     return InterfaceLayout(
         name=name, units="mm", key_by="dsub_pin", background=[], slots=slots,

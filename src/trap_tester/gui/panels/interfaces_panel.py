@@ -33,10 +33,16 @@ from PySide6.QtWidgets import (
 
 from trap_tester.core.layout import (
     AnnotationSet,
+    Mapping,
+    apply_to,
+    coverage,
     dsub50_layout_for_connector,
     fpc_layout_for_connector,
     import_layout,
+    import_mapping,
+    load_csv,
     load_layout,
+    mapping_options,
     user_layout_options,
     user_layouts_dir,
 )
@@ -52,6 +58,7 @@ _BUILTINS = [
 class InterfacesPanel(QWidget):
     def __init__(self) -> None:
         super().__init__()
+        self._mapping_cache: dict[str, Mapping] = {}
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         splitter = QSplitter(Qt.Horizontal)
@@ -63,6 +70,7 @@ class InterfacesPanel(QWidget):
         outer.addWidget(splitter)
 
         self._refresh_interfaces()
+        self._refresh_mappings()
         self._update_view()
 
     # ---- columns -----------------------------------------------------------
@@ -110,6 +118,26 @@ class InterfacesPanel(QWidget):
         conn_row.addWidget(self._conn_spin)
         conn_row.addStretch(1)
         sel_v.addLayout(conn_row)
+
+        map_row = QHBoxLayout()
+        map_row.addWidget(QLabel("Mapping:"))
+        self._mapping_selector = QComboBox()
+        self._mapping_selector.setProperty("role", "interactive")
+        self._mapping_selector.setToolTip(
+            "Cross-interface wiring CSV (found in the custom-layout folders).\n"
+            "Overrides the inherent (connector, pin) wiring so marks re-project\n"
+            "along this setup's real cabling."
+        )
+        self._mapping_selector.currentIndexChanged.connect(self._update_view)
+        map_row.addWidget(self._mapping_selector, 1)
+        self._import_mapping_btn = QPushButton("Import…")
+        self._import_mapping_btn.setProperty("role", "interactive")
+        self._import_mapping_btn.setToolTip(
+            f"Import a cross-interface mapping CSV into {user_layouts_dir()}"
+        )
+        self._import_mapping_btn.clicked.connect(self._import_mapping)
+        map_row.addWidget(self._import_mapping_btn)
+        sel_v.addLayout(map_row)
 
         hint = QLabel(
             "Click a pin to cycle its mark:\n"
@@ -179,21 +207,67 @@ class InterfacesPanel(QWidget):
     def _current_layout(self):
         token = self._iface_selector.currentData()
         if token == "builtin:dsub50":
-            return dsub50_layout_for_connector(self._conn_spin.value())
-        if token == "builtin:fpc":
-            return fpc_layout_for_connector(self._conn_spin.value())
-        try:
-            # Custom layouts are shown whole — they may span several connectors
-            # (e.g. an interposer over 8 DSUB connectors).
-            return load_layout(Path(token))
-        except Exception as exc:  # noqa: BLE001 — deleted / corrupt custom file
-            QMessageBox.warning(
-                self, "Interface unavailable",
-                f"Could not load '{Path(token).name}':\n{exc}\n\n"
-                "Falling back to the built-in DSUB-50.",
+            base = dsub50_layout_for_connector(self._conn_spin.value())
+        elif token == "builtin:fpc":
+            base = fpc_layout_for_connector(self._conn_spin.value())
+        else:
+            try:
+                # Custom layouts are shown whole — they may span several connectors
+                # (e.g. an interposer over 8 DSUB connectors).
+                base = load_layout(Path(token))
+            except Exception as exc:  # noqa: BLE001 — deleted / corrupt custom file
+                QMessageBox.warning(
+                    self, "Interface unavailable",
+                    f"Could not load '{Path(token).name}':\n{exc}\n\n"
+                    "Falling back to the built-in DSUB-50.",
+                )
+                self._iface_selector.setCurrentIndex(0)
+                base = dsub50_layout_for_connector(self._conn_spin.value())
+        mapping = self._selected_mapping()
+        if mapping is None:
+            self._view.set_warning(None)
+            return base
+        if coverage(base, mapping) == 0:
+            name = self._mapping_selector.currentText()
+            self._view.set_warning(
+                f"Mapping '{name}' does not apply to '{base.name}' — marks here "
+                "cannot propagate to or from other interfaces via this mapping."
             )
-            self._iface_selector.setCurrentIndex(0)
-            return dsub50_layout_for_connector(self._conn_spin.value())
+        else:
+            self._view.set_warning(None)
+        return apply_to(base, mapping)
+
+    def _refresh_mappings(self) -> None:
+        """Rebuild the mapping selector from the search folders, keeping choice."""
+        keep = self._mapping_selector.currentData()
+        self._mapping_selector.blockSignals(True)
+        self._mapping_selector.clear()
+        self._mapping_selector.addItem("Inherent (no mapping)", None)
+        for name, path in mapping_options():
+            self._mapping_selector.addItem(name, path)
+        idx = self._mapping_selector.findData(keep) if keep else 0
+        self._mapping_selector.setCurrentIndex(idx if idx >= 0 else 0)
+        self._mapping_selector.blockSignals(False)
+
+    def _selected_mapping(self) -> Mapping | None:
+        """The parsed mapping for the current selection, or ``None`` for inherent."""
+        token = self._mapping_selector.currentData()
+        if not token:
+            return None
+        if token not in self._mapping_cache:
+            try:
+                self._mapping_cache[token] = load_csv(Path(token))
+            except Exception as exc:  # noqa: BLE001 — deleted / malformed CSV
+                QMessageBox.warning(
+                    self, "Mapping unavailable",
+                    f"Could not read '{Path(token).name}':\n{exc}\n\n"
+                    "Falling back to the inherent wiring.",
+                )
+                self._mapping_selector.blockSignals(True)
+                self._mapping_selector.setCurrentIndex(0)
+                self._mapping_selector.blockSignals(False)
+                return None
+        return self._mapping_cache[token]
 
     def _update_view(self) -> None:
         token = self._iface_selector.currentData()
@@ -223,11 +297,33 @@ class InterfacesPanel(QWidget):
         if idx >= 0:
             self._iface_selector.setCurrentIndex(idx)  # triggers _update_view
 
+    def _import_mapping(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import mapping", "", "Mapping CSV (*.csv);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            dest = import_mapping(path)
+        except Exception as exc:  # noqa: BLE001 — surface any parse/IO failure
+            QMessageBox.warning(
+                self, "Import failed",
+                f"'{Path(path).name}' is not a valid mapping CSV:\n{exc}",
+            )
+            return
+        self._mapping_cache.clear()
+        self._refresh_mappings()
+        idx = self._mapping_selector.findData(str(dest))
+        if idx >= 0:
+            self._mapping_selector.setCurrentIndex(idx)  # triggers _update_view
+
     def _manage_folders(self) -> None:
         dlg = LayoutFoldersDialog(self)
         dlg.exec()
         if dlg.changed():
+            self._mapping_cache.clear()
             self._refresh_interfaces()
+            self._refresh_mappings()
             self._update_view()
 
     # ---- annotation set: save / load / clear -------------------------------

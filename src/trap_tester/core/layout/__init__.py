@@ -36,6 +36,13 @@ from trap_tester.core.layout.interface import (
     slot_pins,
 )
 from trap_tester.core.layout.iontrap import build_iontrap, generate_iontrap
+from trap_tester.core.layout.mapping import (
+    Mapping,
+    Net,
+    apply_to,
+    coverage,
+    load_csv,
+)
 from trap_tester.core.layout.primitives import (
     Circle,
     Line,
@@ -51,7 +58,9 @@ from trap_tester.core.layout.store import (
     env_layout_dirs,
     extra_layout_dirs,
     import_layout,
+    import_mapping,
     layout_search_dirs,
+    list_mapping_files,
     list_user_layouts,
     load_layout,
     remove_layout_dir,
@@ -155,6 +164,21 @@ def user_layout_options() -> list[tuple[str, str]]:
     ]
 
 
+def mapping_options() -> list[tuple[str, str]]:
+    """Cross-interface mapping CSVs as ``(display_name, path)`` pairs for a selector.
+
+    Discovered from the custom-layout search folders; colliding file names are
+    qualified with the containing folder, mirroring :func:`user_layout_options`.
+    """
+    paths = list_mapping_files()
+    stems = [p.stem for p in paths]
+    dupes = {s for s in stems if stems.count(s) > 1}
+    return [
+        (f"{p.stem}  ({p.parent.name})" if p.stem in dupes else p.stem, str(p))
+        for p in paths
+    ]
+
+
 def filter_layout_connector(
     layout: InterfaceLayout, connector: int
 ) -> InterfaceLayout:
@@ -183,6 +207,8 @@ __all__ = [
     "Drawing",
     "InterfaceLayout",
     "Line",
+    "Mapping",
+    "Net",
     "PinMark",
     "Polyline",
     "Rect",
@@ -190,10 +216,12 @@ __all__ = [
     "SlotShape",
     "Text",
     "add_layout_dir",
+    "apply_to",
     "build_annotation_drawing",
     "build_drawing",
     "build_iontrap",
     "configured_layout_dirs",
+    "coverage",
     "cycle_state",
     "decoration_style",
     "delete_layout",
@@ -209,11 +237,15 @@ __all__ = [
     "generate_iontrap",
     "has_layout",
     "import_layout",
+    "import_mapping",
     "in_rot_rect",
     "layout_for",
     "layout_search_dirs",
+    "list_mapping_files",
     "list_user_layouts",
+    "load_csv",
     "load_layout",
+    "mapping_options",
     "point_in_poly",
     "primitive_from_dict",
     "remove_layout_dir",

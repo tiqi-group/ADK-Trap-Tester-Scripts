@@ -29,11 +29,14 @@ from trap_tester.core.layout import (
     generate_dsub50,
     generate_fpc,
     import_layout,
+    import_mapping,
     in_rot_rect,
     layout_for,
     layout_search_dirs,
+    list_mapping_files,
     list_user_layouts,
     load_layout,
+    mapping_options,
     point_in_poly,
     remove_layout_dir,
     user_layout_options,
@@ -290,6 +293,27 @@ def test_import_rejects_invalid_file_and_stores_nothing(layout_store):
     assert list_user_layouts() == []  # nothing was written on failure
 
 
+def test_import_mapping_validates_copies_and_lists(layout_store):
+    store, src_dir = layout_store
+    src = src_dir / "wiring.csv"
+    src.write_text("Interposer,Connector,DSUB_Pin\nB25,4,131\n")
+
+    dest = import_mapping(src)
+    assert dest.parent == store
+    assert dest.suffix == ".csv"
+    assert [p.name for p in list_mapping_files()] == ["wiring.csv"]
+    assert ("wiring", str(dest)) in mapping_options()
+
+
+def test_import_mapping_rejects_file_without_required_columns(layout_store):
+    _, src_dir = layout_store
+    bad = src_dir / "bad.csv"
+    bad.write_text("Interposer,SomethingElse\nB25,x\n")  # no connector/pin columns
+    with pytest.raises(ValueError):
+        import_mapping(bad)
+    assert list_mapping_files() == []  # nothing written on failure
+
+
 def test_import_does_not_clobber_existing_name(layout_store):
     _, src_dir = layout_store
     src = src_dir / "dupe.json"
@@ -522,18 +546,42 @@ def test_iontrap_cowired_group_marks_together():
 
 
 def test_iontrap_reads_real_trap_files():
+    # hawk1 + mapping_sparrow: a trap whose mapping CSV is still the plain
+    # Electrode/Connector/DSUB_Pin format the importer reads. (mapping_buzzard.csv
+    # is now the rich cross-interface *mapping* example, a separate artifact.)
     root = pathlib.Path(__file__).resolve().parents[1] / "docs_tmp" / "traps"
-    if not (root / "hawk3.json").exists():
+    if not (root / "hawk1.json").exists():
         pytest.skip("trap definition files not present")
-    lay = generate_iontrap(root / "hawk3.json", root / "mapping_buzzard.csv")
-    assert len(lay.slots) == 340  # 305 single DC + 35 co-wired groups
-    assert sum(len(s.shapes) for s in lay.slots) == 530
-    assert len([s for s in lay.slots if len(s.shapes) > 1]) == 35
-    assert len(lay.background) == 12  # RF rails
+    lay = generate_iontrap(root / "hawk1.json", root / "mapping_sparrow.csv")
+    assert len(lay.slots) == 193  # all single DC electrodes (hawk1 has no groups)
+    assert sum(len(s.shapes) for s in lay.slots) == 193
+    assert len(lay.background) == 8  # RF rails, unmapped -> decoration
+    # every net carries its electrode name as the cross-interface ident
+    assert all(s.ident for s in lay.slots)
+
+
+def test_iontrap_stamps_electrode_ident():
+    lay = build_iontrap(
+        _trap_geometry(),
+        mapping=[("DC_0", 0, 1), ("GRP", 1, 5)],
+        name="t",
+    )
+    by_pin = {(s.connector, s.pin): s for s in lay.slots}
+    assert by_pin[(0, 1)].ident == "DC_0"  # plain electrode
+    assert by_pin[(1, 5)].ident == "GRP"  # the co-wired GROUP name, not a member
+
+
+def test_slot_ident_round_trip():
+    slot = Slot(connector=2, pin=7, x=1.0, y=2.0, ident="B25")
+    back = Slot.from_dict(slot.to_dict())
+    assert back.ident == "B25"
+    # ident is omitted from the dict when None (back-compat with old JSON)
+    assert "ident" not in Slot(connector=0, pin=1, x=0.0, y=0.0).to_dict()
+    assert Slot.from_dict({"connector": 0, "pin": 1, "x": 0.0, "y": 0.0}).ident is None
 
 
 def test_iontrap_tolerates_connector_column_spelling(tmp_path):
-    # sparrow spells it "Connector_Num"; goshawk/buzzard "Connector number"
+    # sparrow spells it "Connector_Num"; goshawk "Connector number"
     for header in ("Connector_Num", "Connector number"):
         csv_path = tmp_path / f"m_{header.replace(' ', '_')}.csv"
         csv_path.write_text(f"Electrode,{header},DSUB_Pin\nDC_0,0,1\n")

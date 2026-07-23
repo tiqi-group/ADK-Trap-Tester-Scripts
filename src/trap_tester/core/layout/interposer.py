@@ -90,7 +90,8 @@ def build_interposer(
 
     slots = [
         Slot(connector=c, pin=pin, x=_x(letters), y=_y(row), r=PAD_R,
-             shape="circle", channel=dsub_to_signal.get(pin), label="")
+             shape="circle", channel=dsub_to_signal.get(pin), label="",
+             ident=f"{letters}{row}")  # the LGA pad name, the interposer's mapping key
         for (letters, row), c, pin in parsed_signal
     ]
     circles = [

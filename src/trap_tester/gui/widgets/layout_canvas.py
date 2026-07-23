@@ -114,6 +114,17 @@ class LayoutCanvas(QWidget):
         self._title_label.setAlignment(Qt.AlignCenter)
         self._title_label.setStyleSheet("color: #b83a20; font-weight: bold;")
         root.addWidget(self._title_label)
+        # A warning strip (e.g. "this mapping doesn't apply to this interface"),
+        # hidden until a subclass/panel sets a message via set_warning().
+        self._warning_label = QLabel("")
+        self._warning_label.setAlignment(Qt.AlignCenter)
+        self._warning_label.setWordWrap(True)
+        self._warning_label.setStyleSheet(
+            "color: #8a6d00; background: #fff4d6; border: 1px solid #e0c060;"
+            " border-radius: 4px; padding: 3px;"
+        )
+        self._warning_label.setVisible(False)
+        root.addWidget(self._warning_label)
         mid = QHBoxLayout()
         mid.setContentsMargins(0, 0, 0, 0)
         mid.addWidget(self.canvas, 1)
@@ -135,6 +146,11 @@ class LayoutCanvas(QWidget):
         """Add a control widget to the bar above the title (used by subclasses)."""
         self._controls_layout.addWidget(widget)
         self._controls_bar.setVisible(True)
+
+    def set_warning(self, message: str | None) -> None:
+        """Show a warning strip above the plot, or hide it when ``message`` is None."""
+        self._warning_label.setText(message or "")
+        self._warning_label.setVisible(bool(message))
 
     def save_view(self, path: str) -> None:
         """Save the view exactly as shown (title, legend, plot, current zoom/pan).

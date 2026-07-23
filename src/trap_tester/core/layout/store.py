@@ -165,6 +165,20 @@ def list_user_layouts() -> list[Path]:
     return out
 
 
+def list_mapping_files() -> list[Path]:
+    """Every ``*.csv`` across all search dirs, sorted per dir (empty if none).
+
+    Mapping CSVs live alongside the custom layouts they wire together, so they are
+    discovered from the same search folders (see :mod:`trap_tester.core.layout
+    .mapping`).
+    """
+    out: list[Path] = []
+    for directory in layout_search_dirs():
+        if directory.exists():
+            out.extend(sorted(directory.glob("*.csv")))
+    return out
+
+
 def load_layout(path: str | Path) -> InterfaceLayout:
     """Load one custom layout (raises on malformed / unsupported JSON)."""
     return InterfaceLayout.load_json(path)
@@ -199,6 +213,26 @@ def import_layout(src: str | Path, name: str | None = None) -> Path:
     stem = name or src.stem
     dest = _unique_path(dest_dir / f"{stem}.json")
     layout.save_json(dest)
+    return dest
+
+
+def import_mapping(src: str | Path, name: str | None = None) -> Path:
+    """Validate ``src`` as a mapping CSV and copy it into the user layouts dir.
+
+    Mapping CSVs are discovered from the same search folders as layouts, so an
+    imported mapping lands next to them and shows up in the mapping selector.
+    ``src`` is parsed first (so a file missing the required connector / DSUB-pin
+    columns is rejected before anything is written) then copied verbatim. Returns
+    the stored path; an existing name gets a numeric suffix rather than clobbering.
+    """
+    from trap_tester.core.layout.mapping import load_csv  # lazy: avoid import cycle
+
+    src = Path(src)
+    load_csv(src)  # validates the required columns before we touch the store
+    dest_dir = ensure_user_layouts_dir()
+    stem = name or src.stem
+    dest = _unique_path(dest_dir / f"{stem}.csv")
+    dest.write_bytes(src.read_bytes())
     return dest
 
 

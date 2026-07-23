@@ -82,7 +82,7 @@ def build_iontrap(
         cy = sum(s.y for s in shapes) / len(shapes)
         slots.append(
             Slot(connector=connector, pin=pin, x=cx, y=cy,
-                 channel=channel, label="", shapes=shapes)
+                 channel=channel, label="", ident=elec_name, shapes=shapes)
         )
         channel += 1
 
