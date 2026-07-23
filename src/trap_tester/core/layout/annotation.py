@@ -25,6 +25,7 @@ from trap_tester.core.layout.interface import (
     UNMEASURED_STROKE,
     Drawing,
     PinMark,
+    slot_pins,
 )
 
 if TYPE_CHECKING:
@@ -214,13 +215,9 @@ def build_annotation_drawing(
             message = f"{ident}: {state_label}"
             if note:
                 message += f"\n{note}"
-            pins.append(
-                PinMark(
-                    x=slot.x, y=slot.y, r=slot.r, shape=slot.shape,
-                    connector=conn, pin=slot.pin, status=state,
-                    fill=color, stroke="#333", label=slot.display_label,
-                    message=message, measured=True, channel=channel, rot=slot.rot,
-                )
+            pins += slot_pins(
+                slot, status=state, fill=color, stroke="#333",
+                message=message, measured=True,
             )
         else:
             unmapped = channel is None
@@ -229,16 +226,12 @@ def build_annotation_drawing(
                 if unmapped
                 else f"{ident}: no comment"
             )
-            pins.append(
-                PinMark(
-                    x=slot.x, y=slot.y, r=slot.r, shape=slot.shape,
-                    connector=conn, pin=slot.pin,
-                    status="unmapped" if unmapped else "clear",
-                    fill=GND_FILL if unmapped else CLEAR_FILL,
-                    stroke=GND_STROKE if unmapped else CLEAR_STROKE,
-                    label=slot.display_label,
-                    message=message, measured=False, channel=channel, rot=slot.rot,
-                )
+            pins += slot_pins(
+                slot,
+                status="unmapped" if unmapped else "clear",
+                fill=GND_FILL if unmapped else CLEAR_FILL,
+                stroke=GND_STROKE if unmapped else CLEAR_STROKE,
+                message=message, measured=False,
             )
     return Drawing(title=layout.name, background=list(layout.background), pins=pins)
 

@@ -7,13 +7,18 @@ and the alternate ``key_by`` (drawing the same findings on another interface).
 
 from __future__ import annotations
 
+import json
+import pathlib
+
 import pandas as pd
 import pytest
 
 from trap_tester.core import analysis as A
 from trap_tester.core.analysis._common import fpc_conductor
 from trap_tester.core.layout import (
+    AnnotationSet,
     add_layout_dir,
+    build_annotation_drawing,
     build_drawing,
     configured_layout_dirs,
     dsub50_layout,
@@ -24,15 +29,18 @@ from trap_tester.core.layout import (
     generate_dsub50,
     generate_fpc,
     import_layout,
+    in_rot_rect,
     layout_for,
     layout_search_dirs,
     list_user_layouts,
     load_layout,
+    point_in_poly,
     remove_layout_dir,
     user_layout_options,
     user_layouts_dir,
 )
-from trap_tester.core.layout.interface import InterfaceLayout, Slot
+from trap_tester.core.layout.interface import InterfaceLayout, Slot, SlotShape
+from trap_tester.core.layout.iontrap import build_iontrap, generate_iontrap
 from trap_tester.core.layout.primitives import Circle, Polyline, primitive_from_dict
 
 
@@ -351,6 +359,188 @@ def test_env_var_extra_dir_is_searched(layout_store, tmp_path, monkeypatch):
     monkeypatch.setenv("TRAP_TESTER_LAYOUT_PATH", str(extra))
     assert extra in layout_search_dirs()
     assert [p.name for p in list_user_layouts()] == ["envlayout.json"]
+
+
+# --- multi-shape slots (ion-trap electrodes / co-wired nets) ---------------
+
+
+def test_slotshape_and_multi_shape_slot_round_trip():
+    poly = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.5], [0.0, 0.5]]
+    s = Slot(
+        connector=2, pin=7, x=0.5, y=0.25, channel=13, label="",
+        shapes=[SlotShape(shape="rect", x=0.5, y=0.25, r=0.3),
+                SlotShape.from_polygon(poly)],
+    )
+    back = Slot.from_dict(s.to_dict())
+    assert len(back.shapes) == 2
+    assert back.shapes[0].shape == "rect"
+    assert back.shapes[1].shape == "poly"
+    assert back.shapes[1].points == poly
+    assert back.channel == 13 and back.label == ""
+
+
+def test_slotshape_from_polygon_centre_and_extent():
+    sh = SlotShape.from_polygon([[0.0, 0.0], [2.0, 0.0], [2.0, 1.0], [0.0, 1.0]])
+    assert (sh.x, sh.y) == (1.0, 0.5)  # bounding-box centre
+    assert sh.extent() == (0.0, 2.0, 0.0, 1.0)
+    assert sh.r == 1.0  # half the larger span
+
+
+def test_single_shape_slot_is_unchanged():
+    # a slot without an explicit shape list still yields exactly one shape
+    s = Slot(connector=0, pin=1, x=0.0, y=0.0, r=0.4, shape="rect")
+    shapes = list(s.iter_shapes())
+    assert len(shapes) == 1 and shapes[0].shape == "rect" and shapes[0].r == 0.4
+    assert "shapes" not in s.to_dict()  # not written when empty (back-compat)
+
+
+def test_multi_shape_slot_expands_to_one_pin_per_shape():
+    res = A.analyse("measure_filter", _four_outcome_df(), A.FilterAnalysisSettings())
+    lay = InterfaceLayout(
+        name="trap-test",
+        slots=[Slot(
+            connector=0, pin=1, x=0.0, y=0.0, channel=99, label="E1",
+            shapes=[SlotShape.from_polygon([[0, 0], [1, 0], [1, 1], [0, 1]]),
+                    SlotShape.from_polygon([[2, 0], [3, 0], [3, 1], [2, 1]]),
+                    SlotShape.from_polygon([[4, 0], [5, 0], [5, 1], [4, 1]])],
+        )],
+    )
+    drawing = build_drawing(res, lay)
+    assert len(drawing.pins) == 3  # one PinMark per shape
+    # every shape carries the one net's identity and the same verdict
+    assert {p.status for p in drawing.pins} == {"ok"}
+    assert {(p.connector, p.pin, p.channel) for p in drawing.pins} == {(0, 1, 99)}
+    assert all(p.shape == "poly" and p.points for p in drawing.pins)
+    # the label is drawn once (on the first shape only)
+    assert [p.label for p in drawing.pins] == ["E1", "", ""]
+    # the drawing's bounds span all three polygons
+    xmin, xmax, _, _ = drawing.bounds(margin=0.0)
+    assert (xmin, xmax) == (0.0, 5.0)
+
+
+def test_cowired_group_marks_all_shapes_together():
+    # one net (one connector/channel) drawn as three shapes: marking the channel
+    # colours every shape, so clicking any co-wired pad marks the whole net.
+    lay = InterfaceLayout(
+        name="cowire-test",
+        slots=[Slot(
+            connector=0, pin=5, x=0.0, y=0.0, channel=42, label="NET",
+            shapes=[SlotShape(shape="rect", x=0.0, y=0.0),
+                    SlotShape(shape="rect", x=1.0, y=0.0),
+                    SlotShape(shape="rect", x=2.0, y=0.0)],
+        )],
+    )
+    ann = AnnotationSet()
+
+    # nothing marked -> all three shapes faint, none faulty
+    drawing = build_annotation_drawing(lay, ann)
+    assert len(drawing.pins) == 3
+    assert all(p.status == "clear" for p in drawing.pins)
+
+    # a single click on the net's channel marks all three shapes at once
+    ann.cycle(0, 42)  # None -> suspicious
+    ann.cycle(0, 42)  # suspicious -> faulty
+    drawing = build_annotation_drawing(lay, ann)
+    assert [p.status for p in drawing.pins] == ["faulty", "faulty", "faulty"]
+
+
+def test_point_in_poly_hit_test():
+    # an L-shaped electrode: the notch must read as OUTSIDE
+    ell = [[0, 0], [2, 0], [2, 1], [1, 1], [1, 2], [0, 2]]
+    assert point_in_poly(0.5, 0.5, ell)   # solid corner
+    assert point_in_poly(1.5, 0.5, ell)   # solid arm
+    assert not point_in_poly(1.5, 1.5, ell)  # inside the bounding box but in the notch
+    assert not point_in_poly(3.0, 0.5, ell)  # well outside
+
+
+def test_in_rot_rect_hit_test():
+    # unrotated unit square (half-size 0.5) centred at the origin
+    assert in_rot_rect(0.4, 0.4, 0, 0, 0.5, 0.5, 0)
+    assert not in_rot_rect(0.6, 0.0, 0, 0, 0.5, 0.5, 0)
+    # rotate 45°: the axis-aligned corner (0.6, 0) now falls inside the diamond,
+    # while a point out along the rotated diagonal falls outside
+    assert in_rot_rect(0.6, 0.0, 0, 0, 0.5, 0.5, 45)
+    assert not in_rot_rect(0.5, 0.5, 0, 0, 0.5, 0.5, 45)
+
+
+# --- ion-trap importer -----------------------------------------------------
+
+
+def _square(x0, y0, s=0.001):
+    """A tiny square electrode polygon (in metres) at grid cell (x0, y0)."""
+    return [[x0, y0], [x0 + s, y0], [x0 + s, y0 + s], [x0, y0 + s]]
+
+
+def _trap_geometry():
+    # two DC electrodes + one co-wired group of two members + one RF rail
+    return {
+        "electrodes": [
+            {"name": "DC_0", "type": "DC", "polygons": [_square(0.0, 0.0)]},
+            {"name": "DC_1", "type": "DC", "polygons": [_square(0.002, 0.0)]},
+            {"name": "CO_A", "type": "DC", "polygons": [_square(0.0, 0.002)]},
+            {"name": "CO_B", "type": "DC", "polygons": [_square(0.002, 0.002)]},
+            {"name": "RF_0", "type": "RF", "polygons": [_square(0.0, 0.004)]},
+        ],
+        "cowired_groups": {"GRP": ["CO_A", "CO_B"]},
+    }
+
+
+def test_iontrap_nets_shapes_and_decoration():
+    lay = build_iontrap(
+        _trap_geometry(),
+        mapping=[("DC_0", 0, 1), ("DC_1", 0, 2), ("GRP", 1, 5)],
+        name="testtrap",
+    )
+    assert lay.units == "mm" and lay.key_by == "dsub_pin"
+    # three nets: two single DC + one co-wired group
+    assert len(lay.slots) == 3
+    by_pin = {(s.connector, s.pin): s for s in lay.slots}
+    assert len(by_pin[(0, 1)].shapes) == 1  # plain electrode -> one shape
+    assert len(by_pin[(1, 5)].shapes) == 2  # co-wired group -> union of members
+    assert all(sh.shape == "poly" for s in lay.slots for sh in s.shapes)
+    # metres -> mm: the 1 mm square spans 1.0 in drawing units
+    xmin, xmax, _, _ = by_pin[(0, 1)].shapes[0].extent()
+    assert xmax - xmin == pytest.approx(1.0)
+    # channels are unique per net (assigned by the importer, not looked up)
+    channels = [s.channel for s in lay.slots]
+    assert len(set(channels)) == 3
+    # the unmapped RF rail is decoration, not a slot
+    assert len(lay.background) == 1
+
+
+def test_iontrap_cowired_group_marks_together():
+    lay = build_iontrap(
+        _trap_geometry(), mapping=[("GRP", 1, 5)], name="t"
+    )
+    grp = lay.slots[0]
+    ann = AnnotationSet()
+    ann.cycle(grp.connector, grp.channel)  # one click on the net
+    drawing = build_annotation_drawing(lay, ann)
+    # both member polygons colour together off the single mark
+    assert len(drawing.pins) == 2
+    assert {p.status for p in drawing.pins} == {"suspicious"}
+
+
+def test_iontrap_reads_real_trap_files():
+    root = pathlib.Path(__file__).resolve().parents[1] / "docs_tmp" / "traps"
+    if not (root / "hawk3.json").exists():
+        pytest.skip("trap definition files not present")
+    lay = generate_iontrap(root / "hawk3.json", root / "mapping_buzzard.csv")
+    assert len(lay.slots) == 340  # 305 single DC + 35 co-wired groups
+    assert sum(len(s.shapes) for s in lay.slots) == 530
+    assert len([s for s in lay.slots if len(s.shapes) > 1]) == 35
+    assert len(lay.background) == 12  # RF rails
+
+
+def test_iontrap_tolerates_connector_column_spelling(tmp_path):
+    # sparrow spells it "Connector_Num"; goshawk/buzzard "Connector number"
+    for header in ("Connector_Num", "Connector number"):
+        csv_path = tmp_path / f"m_{header.replace(' ', '_')}.csv"
+        csv_path.write_text(f"Electrode,{header},DSUB_Pin\nDC_0,0,1\n")
+        geom_path = tmp_path / "g.json"
+        geom_path.write_text(json.dumps(_trap_geometry()))
+        lay = generate_iontrap(geom_path, csv_path, name="t")
+        assert [(s.connector, s.pin) for s in lay.slots] == [(0, 1)]
 
 
 def test_colliding_stems_are_disambiguated(layout_store, tmp_path):

@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
 
 from trap_tester.core.layout import Circle, Drawing, Line, Polyline, Rect, Text
 from trap_tester.core.layout.decoration import DECORATION_INFO
+from trap_tester.core.layout.geometry import in_rot_rect, point_in_poly
 
 if TYPE_CHECKING:
     from trap_tester.core.layout.interface import PinMark
@@ -295,6 +296,16 @@ class LayoutCanvas(QWidget):
 
     def _draw_pin(self, pin: PinMark) -> None:
         ax = self.ax
+        if pin.shape == "poly" and pin.points:
+            # an arbitrary electrode outline (e.g. an ion-trap electrode)
+            patch = MplPolygon(
+                pin.points, closed=True, facecolor=pin.fill, edgecolor=pin.stroke,
+                lw=0.8, zorder=3)
+            ax.add_patch(patch)
+            if pin.label:
+                ax.text(pin.x, pin.y, pin.label, fontsize=5.5, ha="center",
+                        va="center", color=text_color_for(pin.fill), zorder=4)
+            return
         if pin.shape == "finger":
             # an elongated pad oriented by ``rot`` (e.g. a bond finger)
             length, width = 2 * pin.r, 2 * pin.r * _FINGER_ASPECT
@@ -319,10 +330,24 @@ class LayoutCanvas(QWidget):
     def _pin_at(self, event) -> PinMark | None:
         if event.inaxes is not self.ax or event.xdata is None or not self._pins:
             return None
-        for pin in self._pins:
-            if (event.xdata - pin.x) ** 2 + (event.ydata - pin.y) ** 2 <= pin.r ** 2:
+        x, y = event.xdata, event.ydata
+        # last-drawn-first: pins painted later sit on top, so hit-test them first
+        for pin in reversed(self._pins):
+            if self._pin_contains(pin, x, y):
                 return pin
         return None
+
+    @staticmethod
+    def _pin_contains(pin: PinMark, x: float, y: float) -> bool:
+        """Whether ``(x, y)`` lands on ``pin``, respecting its shape."""
+        if pin.shape == "poly" and pin.points:
+            return point_in_poly(x, y, pin.points)
+        if pin.shape == "rect":
+            return in_rot_rect(x, y, pin.x, pin.y, pin.r, pin.r, pin.rot)
+        if pin.shape == "finger":
+            return in_rot_rect(
+                x, y, pin.x, pin.y, pin.r, pin.r * _FINGER_ASPECT, pin.rot)
+        return (x - pin.x) ** 2 + (y - pin.y) ** 2 <= pin.r ** 2
 
     def _on_hover(self, event) -> None:
         hit = self._pin_at(event)

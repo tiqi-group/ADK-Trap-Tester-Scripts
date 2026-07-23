@@ -23,6 +23,7 @@ any renderer can paint and hit-test for hover.
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -50,6 +51,63 @@ _KEY_ATTR = {"dsub_pin": "dsub_pin", "fpc_conductor": "fpc_conductor"}
 
 
 @dataclass
+class SlotShape:
+    """One drawable primitive of a slot's geometry.
+
+    A simple pad is a ``"circle"`` / ``"rect"`` / ``"finger"`` positioned at
+    ``(x, y)`` with radius ``r`` and rotation ``rot``. An arbitrary electrode is a
+    ``"poly"`` whose outline is ``points`` (``[[x, y], …]``); for a polygon ``x``
+    / ``y`` are the bounding-box centre (label + hover anchor) and ``r`` a
+    bounding radius, both derived from ``points`` by :meth:`from_polygon`.
+    """
+
+    shape: str = "circle"  # circle | rect | finger | poly
+    x: float = 0.0
+    y: float = 0.0
+    r: float = 0.38
+    rot: float = 0.0
+    points: list[list[float]] | None = None  # outline for shape == "poly"
+
+    @classmethod
+    def from_polygon(cls, points: list[list[float]]) -> SlotShape:
+        """A ``"poly"`` shape with centre/radius derived from its outline."""
+        xs = [p[0] for p in points]
+        ys = [p[1] for p in points]
+        cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2
+        r = max(max(xs) - min(xs), max(ys) - min(ys)) / 2
+        pts = [[float(p[0]), float(p[1])] for p in points]
+        return cls(shape="poly", x=cx, y=cy, r=r, points=pts)
+
+    def extent(self) -> tuple[float, float, float, float]:
+        """``(xmin, xmax, ymin, ymax)`` covering this shape."""
+        if self.shape == "poly" and self.points:
+            xs = [p[0] for p in self.points]
+            ys = [p[1] for p in self.points]
+            return min(xs), max(xs), min(ys), max(ys)
+        return self.x - self.r, self.x + self.r, self.y - self.r, self.y + self.r
+
+    def to_dict(self) -> dict[str, Any]:
+        data: dict[str, Any] = {
+            "shape": self.shape, "x": self.x, "y": self.y, "r": self.r, "rot": self.rot,
+        }
+        if self.points is not None:
+            data["points"] = self.points
+        return data
+
+    @classmethod
+    def from_dict(cls, data: dict[str, Any]) -> SlotShape:
+        raw_pts = data.get("points")
+        return cls(
+            shape=str(data.get("shape", "circle")),
+            x=float(data.get("x", 0.0)),
+            y=float(data.get("y", 0.0)),
+            r=float(data.get("r", 0.38)),
+            rot=float(data.get("rot", 0.0)),
+            points=None if raw_pts is None else [[float(a), float(b)] for a, b in raw_pts],
+        )
+
+
+@dataclass
 class Slot:
     """Where one signal sits on the sketch.
 
@@ -63,6 +121,13 @@ class Slot:
     ``channel``, so a mark placed on one interface can be re-projected onto the
     other purely from the JSON, with no runtime pin↔conductor lookup. ``None``
     for slots that map to no channel (a GND / spare / unconnected contact).
+
+    A slot is ONE logical pad with ONE measurement identity, but may be *drawn*
+    as several primitives — an ion-trap electrode net is several polygons on the
+    one ``(connector, pin)``. ``shapes`` holds that geometry; when empty the slot
+    is drawn from the flat ``x/y/r/rot/shape`` fields (the single-shape case, and
+    what all existing layouts use). Every shape shares the slot's status and
+    mark, so marking one co-wired pad marks the whole net for free.
     """
 
     connector: int
@@ -71,17 +136,25 @@ class Slot:
     y: float
     r: float = 0.38
     rot: float = 0.0
-    shape: str = "circle"  # circle | rect
+    shape: str = "circle"  # circle | rect | finger | poly
     channel: int | None = None  # canonical mux signal; None = unmapped
     label: str | None = None  # in-shape text; None -> str(pin). "" hides it.
+    shapes: list[SlotShape] = field(default_factory=list)  # empty -> single shape
 
     @property
     def display_label(self) -> str:
         """Text drawn inside the shape (the pin number unless overridden)."""
         return self.label if self.label is not None else str(self.pin)
 
+    def iter_shapes(self) -> Iterator[SlotShape]:
+        """Yield the slot's drawn shapes (the flat single shape when unset)."""
+        if self.shapes:
+            yield from self.shapes
+        else:
+            yield SlotShape(shape=self.shape, x=self.x, y=self.y, r=self.r, rot=self.rot)
+
     def to_dict(self) -> dict[str, Any]:
-        return {
+        data: dict[str, Any] = {
             "connector": self.connector,
             "pin": self.pin,
             "x": self.x,
@@ -92,11 +165,15 @@ class Slot:
             "channel": self.channel,
             "label": self.label,
         }
+        if self.shapes:
+            data["shapes"] = [s.to_dict() for s in self.shapes]
+        return data
 
     @classmethod
     def from_dict(cls, data: dict[str, Any]) -> Slot:
         raw_channel = data.get("channel")
         raw_label = data.get("label")
+        raw_shapes = data.get("shapes")
         return cls(
             connector=int(data["connector"]),
             pin=int(data["pin"]),
@@ -107,6 +184,7 @@ class Slot:
             shape=str(data.get("shape", "circle")),
             channel=None if raw_channel is None else int(raw_channel),
             label=None if raw_label is None else str(raw_label),
+            shapes=[SlotShape.from_dict(s) for s in raw_shapes] if raw_shapes else [],
         )
 
 
@@ -165,6 +243,38 @@ class PinMark:
     measured: bool
     channel: int | None = None  # canonical channel; lets a click resolve identity
     rot: float = 0.0  # degrees; orients an elongated "finger" shape
+    points: list[list[float]] | None = None  # outline when shape == "poly"
+
+
+def slot_pins(
+    slot: Slot,
+    *,
+    status: str,
+    fill: str,
+    stroke: str,
+    message: str,
+    measured: bool,
+    label: str | None = None,
+) -> list[PinMark]:
+    """Expand a slot into one :class:`PinMark` per drawn shape.
+
+    Every shape carries the slot's identity (``connector`` / ``pin`` / ``channel``)
+    and the same verdict, so they colour together and a click on any of them
+    resolves to the one net. The label is drawn on the first shape only.
+    """
+    lbl = slot.display_label if label is None else label
+    marks: list[PinMark] = []
+    for i, sh in enumerate(slot.iter_shapes()):
+        marks.append(
+            PinMark(
+                x=sh.x, y=sh.y, r=sh.r, shape=sh.shape,
+                connector=slot.connector, pin=slot.pin, status=status,
+                fill=fill, stroke=stroke, label=lbl if i == 0 else "",
+                message=message, measured=measured, channel=slot.channel,
+                rot=sh.rot, points=sh.points,
+            )
+        )
+    return marks
 
 
 @dataclass
@@ -180,8 +290,12 @@ class Drawing:
         xs: list[float] = []
         ys: list[float] = []
         for p in self.pins:
-            xs += [p.x - p.r, p.x + p.r]
-            ys += [p.y - p.r, p.y + p.r]
+            if p.shape == "poly" and p.points:
+                xs += [pt[0] for pt in p.points]
+                ys += [pt[1] for pt in p.points]
+            else:
+                xs += [p.x - p.r, p.x + p.r]
+                ys += [p.y - p.r, p.y + p.r]
         for prim in self.background:
             if isinstance(prim, Circle):
                 xs += [prim.x - prim.r, prim.x + prim.r]
@@ -225,25 +339,15 @@ def build_drawing(result: AnalysisResult, layout: InterfaceLayout) -> Drawing:
         f = by_key.get((slot.connector, slot.pin))
         if f is not None:
             _label, color = STATUS_INFO.get(f.status, (f.status, "#000"))
-            pins.append(
-                PinMark(
-                    x=slot.x, y=slot.y, r=slot.r, shape=slot.shape,
-                    connector=slot.connector, pin=slot.pin,
-                    status=f.status, fill=color, stroke="#333",
-                    label=slot.display_label, message=f.message, measured=True,
-                    channel=slot.channel, rot=slot.rot,
-                )
+            pins += slot_pins(
+                slot, status=f.status, fill=color, stroke="#333",
+                message=f.message, measured=True,
             )
         else:
-            pins.append(
-                PinMark(
-                    x=slot.x, y=slot.y, r=slot.r, shape=slot.shape,
-                    connector=slot.connector, pin=slot.pin,
-                    status="unmeasured", fill=UNMEASURED_FILL,
-                    stroke=UNMEASURED_STROKE, label=slot.display_label,
-                    message=f"Pin {slot.pin}: not measured", measured=False,
-                    channel=slot.channel, rot=slot.rot,
-                )
+            pins += slot_pins(
+                slot, status="unmeasured", fill=UNMEASURED_FILL,
+                stroke=UNMEASURED_STROKE, message=f"Pin {slot.pin}: not measured",
+                measured=False,
             )
 
     return Drawing(title=result.title, background=list(layout.background), pins=pins)
@@ -251,10 +355,12 @@ def build_drawing(result: AnalysisResult, layout: InterfaceLayout) -> Drawing:
 
 __all__ = [
     "Slot",
+    "SlotShape",
     "InterfaceLayout",
     "PinMark",
     "Drawing",
     "build_drawing",
+    "slot_pins",
     "UNMEASURED_FILL",
     "UNMEASURED_STROKE",
 ]
