@@ -13,6 +13,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
+from matplotlib.collections import PatchCollection
 from matplotlib.figure import Figure
 from matplotlib.patches import Circle as MplCircle
 from matplotlib.patches import Polygon as MplPolygon
@@ -41,6 +42,15 @@ LegendItem = tuple[str, str, str]
 _FINGER_ASPECT = 0.32  # width / length of an elongated "finger" pad
 _ZOOM_STEP = 1.2       # limits shrink/grow by this factor per wheel notch
 _DRAG_PX = 3           # a press that moves less than this is a click, not a pan
+# In-pad labels are drawn level-of-detail: only for pads at least this big on
+# screen (radius in px) and inside the current view. Tiny/off-screen pads are
+# skipped, so a dense layout (e.g. the interposer/trap) stays fast and legible —
+# labels appear as you zoom in rather than overprinting into a blob when zoomed out.
+_MIN_LABEL_PX = 9.0
+# ...and if more than this many still qualify (a big grid at full zoom-out), draw
+# none — text is the slow part, and that many labels at once are unreadable anyway.
+# Zoom into a region and they appear. Keeps every render/zoom/pan fast.
+_MAX_LABELS = 120
 
 # (xlim, ylim) axis limits
 _Lims = tuple[tuple[float, float], tuple[float, float]]
@@ -90,6 +100,9 @@ class LayoutCanvas(QWidget):
         # to a narrower rectangle than the data spanned).
         self.ax = self.fig.add_axes((0.0, 0.0, 1.0, 1.0))
         self._pins: list[PinMark] = []
+        self._label_artists: list = []  # in-pad labels, redrawn level-of-detail
+        self._bg_patches: list = []   # background patches batched into a collection
+        self._pin_patches: list = []  # pin patches batched into a collection
         # view state: _fit_lims fits the whole drawing; _preserved_lims is the
         # current zoom/pan kept across re-renders (None => fit on next draw).
         self._fit_lims: _Lims | None = None
@@ -166,6 +179,7 @@ class LayoutCanvas(QWidget):
     # ---- public API --------------------------------------------------------
     def clear(self, message: str) -> None:
         self._pins = []
+        self._label_artists = []  # removed by ax.clear() below
         self._fit_lims = None
         self._preserved_lims = None  # nothing to zoom into
         self._title_label.setText(message)
@@ -181,6 +195,7 @@ class LayoutCanvas(QWidget):
         self._preserved_lims = None
         if self._fit_lims is not None:
             self._apply_lims(*self._fit_lims)
+            self._render_labels()
             self.canvas.draw_idle()
 
     def _apply_lims(self, xlim: tuple[float, float], ylim: tuple[float, float]) -> None:
@@ -214,6 +229,7 @@ class LayoutCanvas(QWidget):
     def show_drawing(self, drawing: Drawing) -> None:
         ax = self.ax
         ax.clear()
+        self._label_artists = []  # ax.clear() removed the previous label artists
         # The axes fills the whole canvas (aspect="auto"); we keep pins circular
         # ourselves in _apply_lims by matching data-per-pixel in x and y. This
         # way the title sits at the top of the window and pan/zoom (which rely on
@@ -224,6 +240,8 @@ class LayoutCanvas(QWidget):
         for spine in ax.spines.values():
             spine.set_visible(False)
 
+        self._bg_patches = []
+        self._pin_patches = []
         for prim in drawing.background:
             self._draw_primitive(prim)
 
@@ -231,11 +249,21 @@ class LayoutCanvas(QWidget):
         for pin in drawing.pins:
             self._draw_pin(pin)
 
+        # one collection each for background + pins — much faster to draw than
+        # adding every patch to the axes individually.
+        if self._bg_patches:
+            ax.add_collection(PatchCollection(
+                self._bg_patches, match_original=True, zorder=1))
+        if self._pin_patches:
+            ax.add_collection(PatchCollection(
+                self._pin_patches, match_original=True, zorder=3))
+
         self._title_label.setText(self._title(drawing))
         xmin, xmax, ymin, ymax = drawing.bounds()
         self._fit_lims = ((xmin, xmax), (ymin, ymax))
         # keep the current zoom/pan across re-renders, else fit the whole drawing
         self._apply_lims(*(self._preserved_lims or self._fit_lims))
+        self._render_labels()
         self._make_annot()
         self._render_legend(self._legend(drawing))
         self.canvas.draw_idle()
@@ -279,29 +307,38 @@ class LayoutCanvas(QWidget):
         self._annot.set_visible(False)
 
     def _draw_primitive(self, prim) -> None:
+        """Add one background primitive.
+
+        Patch-shaped primitives are collected into ``_bg_patches`` (drawn as one
+        :class:`PatchCollection` in :meth:`show_drawing` — far faster than hundreds
+        of individual patches); lines and text are drawn directly (they are few).
+        """
         ax = self.ax
         if isinstance(prim, Circle):
-            ax.add_patch(MplCircle(
+            self._bg_patches.append(MplCircle(
                 (prim.x, prim.y), prim.r, facecolor=prim.fill or "none",
-                edgecolor=prim.stroke or "none", lw=prim.width, zorder=1))
+                edgecolor=prim.stroke or "none", lw=prim.width))
         elif isinstance(prim, Rect):
             patch = MplRect(
                 (prim.x - prim.w / 2, prim.y - prim.h / 2), prim.w, prim.h,
                 facecolor=prim.fill or "none", edgecolor=prim.stroke or "none",
-                lw=prim.width, zorder=1)
-            if prim.rotation:
+                lw=prim.width)
+            if prim.rotation:  # rotated -> can't batch (collections share a transform)
                 patch.set_transform(
                     Affine2D().rotate_deg_around(prim.x, prim.y, prim.rotation)
                     + ax.transData)
-            ax.add_patch(patch)
+                patch.set_zorder(1)
+                ax.add_patch(patch)
+            else:
+                self._bg_patches.append(patch)
         elif isinstance(prim, Line):
             ax.plot([prim.x1, prim.x2], [prim.y1, prim.y2],
                     color=prim.stroke or "#444", lw=prim.width, zorder=1)
         elif isinstance(prim, Polyline):
             if prim.closed:
-                ax.add_patch(MplPolygon(
+                self._bg_patches.append(MplPolygon(
                     prim.points, closed=True, facecolor=prim.fill or "none",
-                    edgecolor=prim.stroke or "none", lw=prim.width, zorder=1))
+                    edgecolor=prim.stroke or "none", lw=prim.width))
             else:
                 xs = [p[0] for p in prim.points]
                 ys = [p[1] for p in prim.points]
@@ -312,35 +349,64 @@ class LayoutCanvas(QWidget):
 
     def _draw_pin(self, pin: PinMark) -> None:
         ax = self.ax
+        # Labels are NOT drawn here — a separate level-of-detail pass
+        # (_render_labels) draws them for large, on-screen pads only. Patches are
+        # collected into ``_pin_patches`` and drawn as one PatchCollection.
         if pin.shape == "poly" and pin.points:
             # an arbitrary electrode outline (e.g. an ion-trap electrode)
-            patch = MplPolygon(
+            self._pin_patches.append(MplPolygon(
                 pin.points, closed=True, facecolor=pin.fill, edgecolor=pin.stroke,
-                lw=0.8, zorder=3)
-            ax.add_patch(patch)
-            if pin.label:
-                ax.text(pin.x, pin.y, pin.label, fontsize=5.5, ha="center",
-                        va="center", color=text_color_for(pin.fill), zorder=4)
+                lw=0.8))
             return
         if pin.shape == "finger":
-            # an elongated pad oriented by ``rot`` (e.g. a bond finger)
+            # an elongated pad oriented by ``rot`` — rotated, so drawn individually
             length, width = 2 * pin.r, 2 * pin.r * _FINGER_ASPECT
             patch = MplRect(
                 (pin.x - length / 2, pin.y - width / 2), length, width,
                 facecolor=pin.fill, edgecolor=pin.stroke, lw=0.5, zorder=3)
             patch.set_transform(
                 Affine2D().rotate_deg_around(pin.x, pin.y, pin.rot) + ax.transData)
-        elif pin.shape == "rect":
-            patch = MplRect(
+            ax.add_patch(patch)
+            return
+        if pin.shape == "rect":
+            self._pin_patches.append(MplRect(
                 (pin.x - pin.r, pin.y - pin.r), 2 * pin.r, 2 * pin.r,
-                facecolor=pin.fill, edgecolor=pin.stroke, lw=1.1, zorder=3)
+                facecolor=pin.fill, edgecolor=pin.stroke, lw=1.1))
         else:
-            patch = MplCircle((pin.x, pin.y), pin.r, facecolor=pin.fill,
-                              edgecolor=pin.stroke, lw=1.1, zorder=3)
-        ax.add_patch(patch)
-        if pin.label:
-            ax.text(pin.x, pin.y, pin.label, fontsize=5.5, ha="center", va="center",
-                    color=text_color_for(pin.fill), zorder=4)
+            self._pin_patches.append(MplCircle(
+                (pin.x, pin.y), pin.r, facecolor=pin.fill, edgecolor=pin.stroke,
+                lw=1.1))
+
+    def _render_labels(self) -> None:
+        """(Re)draw in-pad labels for large, on-screen pads only (level-of-detail).
+
+        Cheap enough to call on every zoom/pan: at a wide zoom the pads are small
+        so nothing is drawn (fast, no overprint); zoomed in, only the handful of
+        pads actually in view get a label. Existing label artists are removed first.
+        """
+        for artist in self._label_artists:
+            artist.remove()
+        self._label_artists = []
+        if not self._pins:
+            return
+        (x0, x1), (y0, y1) = self.ax.get_xlim(), self.ax.get_ylim()
+        span = abs(x1 - x0)
+        bbox = self.ax.get_window_extent()
+        if bbox.width <= 0 or span == 0:
+            return
+        px_per_data = bbox.width / span
+        lox, hix, loy, hiy = min(x0, x1), max(x0, x1), min(y0, y1), max(y0, y1)
+        visible = [
+            pin for pin in self._pins
+            if pin.label and pin.r * px_per_data >= _MIN_LABEL_PX
+            and lox <= pin.x <= hix and loy <= pin.y <= hiy
+        ]
+        if len(visible) > _MAX_LABELS:  # too dense to read; wait for more zoom
+            return
+        for pin in visible:
+            self._label_artists.append(self.ax.text(
+                pin.x, pin.y, pin.label, fontsize=5.5, ha="center", va="center",
+                color=text_color_for(pin.fill), zorder=4))
 
     # ---- hit-test + hover --------------------------------------------------
     def _pin_at(self, event) -> PinMark | None:
@@ -395,6 +461,7 @@ class LayoutCanvas(QWidget):
         self._apply_lims((cx + (x0 - cx) * scale, cx + (x1 - cx) * scale),
                          (cy + (y0 - cy) * scale, cy + (y1 - cy) * scale))
         self._remember_view()
+        self._render_labels()
         self.canvas.draw_idle()
 
     def _on_press(self, event) -> None:
@@ -427,6 +494,9 @@ class LayoutCanvas(QWidget):
         dx = -dx_pix / bbox.width * (x1 - x0)   # from the press lims -> no drift
         dy = -dy_pix / bbox.height * (y1 - y0)
         self._apply_lims((x0 + dx, x1 + dx), (y0 + dy, y1 + dy))
+        # Labels sit at data coords, so they pan with the view for free; skip the
+        # (costly) re-render mid-drag and refresh the set once on release — keeps
+        # panning smooth even on a label-heavy view.
         self.canvas.draw_idle()
 
     def _on_resize(self, event) -> None:
@@ -434,6 +504,7 @@ class LayoutCanvas(QWidget):
         lims = self._preserved_lims or self._fit_lims
         if lims is not None:
             self._apply_lims(*lims)
+            self._render_labels()
 
     def _on_release(self, event) -> None:
         if self._pan_start_pix is None:
@@ -442,6 +513,8 @@ class LayoutCanvas(QWidget):
         self._pan_start_pix = None
         if dragged:
             self._remember_view()  # persist the pan across re-renders
+            self._render_labels()  # refresh which pads are labelled after the pan
+            self.canvas.draw_idle()
         else:
             self._on_canvas_click(event)  # a click, not a drag
 

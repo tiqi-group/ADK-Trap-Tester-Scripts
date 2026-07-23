@@ -274,8 +274,13 @@ def slot_pins(
     Every shape carries the slot's identity (``connector`` / ``pin`` / ``channel``)
     and the same verdict, so they colour together and a click on any of them
     resolves to the one net. The label is drawn on the first shape only.
+
+    When the slot has no explicit drawn label (custom layouts leave it blank) the
+    per-interface ``ident`` (LGA pad / finger / electrode name) is used instead, so
+    every pad is annotated the way the built-in DSUB shows its pin numbers.
     """
     lbl = slot.display_label if label is None else label
+    lbl = lbl or (slot.ident or "")
     marks: list[PinMark] = []
     for i, sh in enumerate(slot.iter_shapes()):
         marks.append(
