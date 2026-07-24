@@ -16,11 +16,12 @@ from __future__ import annotations
 from dataclasses import fields, is_dataclass
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QVBoxLayout,
@@ -60,8 +61,31 @@ class SettingsForm(QWidget):
                 self._outer.addWidget(header)
             form = QFormLayout()
             for f in groups[cat]:
-                form.addRow(f.name.replace("_", " "), self._make_editor(settings, f))
+                editor = self._make_editor(settings, f)
+                field_widget = self._with_unit(editor, f.metadata.get("unit"))
+                form.addRow(f.name.replace("_", " "), field_widget)
             self._outer.addLayout(form)
+
+    @staticmethod
+    def _with_unit(editor: QWidget, unit: str | None) -> QWidget:
+        """Pair ``editor`` with a static, greyed-out unit box to its right.
+
+        Returns the editor unchanged when the field declares no unit, so
+        unitless fields (drop-downs, text, checkboxes) keep the full row width.
+        """
+        if not unit:
+            return editor
+        row = QWidget()
+        lay = QHBoxLayout(row)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        lay.addWidget(editor, 1)
+        unit_box = QLabel(unit)
+        unit_box.setProperty("role", "unit")
+        unit_box.setAlignment(Qt.AlignCenter)
+        unit_box.setEnabled(False)  # static: not an input
+        lay.addWidget(unit_box)
+        return row
 
     def _make_editor(self, settings: Any, f: Any) -> QWidget:
         value = getattr(settings, f.name)

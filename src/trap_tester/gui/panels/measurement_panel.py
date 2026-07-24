@@ -30,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from trap_tester.core import settings as settings_io
 from trap_tester.core import measurements as _core_measurements
+from trap_tester.core.appconfig import measurements_dir, results_dir
 from trap_tester.core.device import enumerate_devices
 from trap_tester.core.measurements import (
     digital_out_for,
@@ -54,7 +55,6 @@ from trap_tester.gui.widgets.settings_form import SettingsForm
 from trap_tester.gui.widgets.terminal_output import TerminalOutput
 from trap_tester.gui.worker import MeasurementWorker, QtGate, QtReporter
 
-RESULTS_DIR = Path("results")
 # The core module that implements each measurement (shown in the source viewer).
 _CORE_MEAS_DIR = Path(_core_measurements.__file__).parent
 
@@ -101,7 +101,7 @@ _SOURCE_FILE: dict[str, Path] = {
 class MeasurementPanel(QWidget):
     def __init__(self) -> None:
         super().__init__()
-        RESULTS_DIR.mkdir(exist_ok=True)
+        measurements_dir().mkdir(parents=True, exist_ok=True)
         self._worker: MeasurementWorker | None = None
         self._reporter: QtReporter | None = None
         self._gate: QtGate | None = None
@@ -121,6 +121,11 @@ class MeasurementPanel(QWidget):
         self._splitter.setSizes([220, 700, 360])
         outer.addWidget(self._splitter)
 
+    def reload_settings(self) -> None:
+        """Re-read the configured output paths (called after Settings changes)."""
+        measurements_dir().mkdir(parents=True, exist_ok=True)
+        self._result_browser.set_directory(results_dir())
+
     # ---- columns -----------------------------------------------------------
     def _build_left(self) -> QWidget:
         col = QSplitter(Qt.Vertical)
@@ -128,7 +133,9 @@ class MeasurementPanel(QWidget):
             "Measurement Definition",
             entries=[(_DISPLAY_NAME[k], k) for k in _DEFINITION_ORDER],
         )
-        self._result_browser = FileBrowser("Measurement Result", RESULTS_DIR)
+        self._result_browser = FileBrowser(
+            "Measurement Result", results_dir(), recursive=True
+        )
         # single click chooses the measurement; double click views the source
         self._definition_browser.selected.connect(self._choose_measurement)
         self._definition_browser.opened.connect(self._show_definition_code)
@@ -350,7 +357,12 @@ class MeasurementPanel(QWidget):
         if amplitude is None or f_square is None:
             self._preview_box.setVisible(False)
             return
-        self._preview.update_preview(f_square, amplitude)
+        trigger_level = getattr(s, "trigger_level", 0.4)
+        trigger_slope = getattr(s, "trigger_slope", "rising")
+        self._preview.update_preview(
+            f_square, amplitude,
+            trigger_level=trigger_level, trigger_slope=trigger_slope,
+        )
         self._preview_box.setVisible(True)
 
     # ---- run / stop --------------------------------------------------------

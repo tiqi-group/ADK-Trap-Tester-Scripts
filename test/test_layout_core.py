@@ -45,6 +45,7 @@ from trap_tester.core.layout import (
 from trap_tester.core.layout.interface import InterfaceLayout, Slot, SlotShape
 from trap_tester.core.layout.iontrap import build_iontrap, generate_iontrap
 from trap_tester.core.layout.primitives import Circle, Polyline, primitive_from_dict
+from trap_tester.core.layout.tiling import TESTER_CONNECTORS, tile_connector_layouts
 
 
 def _four_outcome_df() -> pd.DataFrame:
@@ -604,3 +605,80 @@ def test_colliding_stems_are_disambiguated(layout_store, tmp_path):
     # both are listed, each qualified by its folder name (not a bare "dsub50")
     assert len(labels) == 2
     assert all("dsub50" in name and "(" in name for name in labels)
+
+
+# ---- multi-connector tiling (the "show all instances" toggle) -------------
+def test_tile_connector_layouts_merges_and_offsets():
+    conns = [0, 1, 2]
+    tiled = tile_connector_layouts(
+        [dsub50_layout_for_connector(c) for c in conns], conns, "DSUB all"
+    )
+    # every connector's slots are present, each keeping its own connector stamp
+    assert {s.connector for s in tiled.slots} == {0, 1, 2}
+    per_conn = len(dsub50_layout_for_connector(0).slots)
+    assert len(tiled.slots) == per_conn * 3
+    # tiles are offset (not overlaid), so the merged bounding area grows with N
+    single = dsub50_layout_for_connector(0)
+    sx0, sx1, sy0, sy1 = _bounds(single)
+    tx0, tx1, ty0, ty1 = _bounds(tiled)
+    single_area = (sx1 - sx0) * (sy1 - sy0)
+    tiled_area = (tx1 - tx0) * (ty1 - ty0)
+    assert tiled_area > 2 * single_area
+    # every tile contributes its own background (shell + its connector title)
+    assert len(tiled.background) == 3 * len(single.background)
+
+
+def test_tile_single_connector_is_passthrough():
+    only = dsub50_layout_for_connector(3)
+    assert tile_connector_layouts([only], [3], "x") is only
+
+
+def test_tiled_layout_colours_all_connectors():
+    conns = [0, 1]
+    tiled = tile_connector_layouts(
+        [dsub50_layout_for_connector(c) for c in conns], conns, "DSUB all"
+    )
+    # a result spanning both connectors colours pins on both tiles
+    import pandas as pd
+    rows = []
+    for c in conns:
+        rows.append({"DSUB connector": c, "DSUB pin": 1, "Shorted": False,
+                     "C_filter_nF": 1.0, "R_filter_Ohm": 2000})
+    res = A.analyse("measure_filter", pd.DataFrame(rows), A.FilterAnalysisSettings())
+    drawing = build_drawing(res, tiled)
+    measured = [p for p in drawing.pins if p.measured]
+    assert {p.connector for p in measured} == {0, 1}
+
+
+def _bounds(layout):
+    from trap_tester.core.layout.tiling import _layout_bounds
+    return _layout_bounds(layout)
+
+
+def test_discovery_is_recursive(layout_store):
+    store, _ = layout_store
+    store.mkdir()
+    (store / "top.json").write_text('{"name": "t", "slots": []}')
+    nested = store / "traps" / "hawk3"
+    nested.mkdir(parents=True)
+    (nested / "deep.json").write_text('{"name": "d", "slots": []}')
+    (nested / "buzzard.csv").write_text("hawk3,Connector,DSUB_Pin\nA,0,1\n")
+
+    layouts = {p.name for p in list_user_layouts()}
+    assert layouts == {"top.json", "deep.json"}  # descends into sub-folders
+    assert {p.name for p in list_mapping_files()} == {"buzzard.csv"}
+
+
+def test_recursive_duplicate_stems_qualified_by_subpath(layout_store):
+    store, _ = layout_store
+    for sub in ("a", "b"):
+        d = store / sub
+        d.mkdir(parents=True)
+        (d / "map.csv").write_text("hawk3,Connector,DSUB_Pin\nA,0,1\n")
+    (store / "unique.csv").write_text("hawk1,Connector,DSUB_Pin\nB,0,2\n")
+
+    names = {name for name, _ in mapping_options()}
+    # the unique stem stays bare; the colliding ones are qualified by sub-path
+    assert "unique" in names
+    qualified = {n for n in names if n.startswith("map")}
+    assert qualified == {f"map  ({store.name}/a)", f"map  ({store.name}/b)"}

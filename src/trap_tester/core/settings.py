@@ -36,11 +36,16 @@ _CAT_TRIG = "Trigger"
 _CAT_THRESH = "Detection thresholds"
 
 
-def _meta(category: str, choices: list[str] | None = None) -> dict[str, Any]:
-    """Field metadata: a settings-form category and optional drop-down choices."""
+def _meta(
+    category: str, choices: list[str] | None = None, unit: str | None = None
+) -> dict[str, Any]:
+    """Field metadata: a settings-form category, optional drop-down ``choices``
+    and an optional ``unit`` shown as a static box to the right of the input."""
     md: dict[str, Any] = {"category": category}
     if choices is not None:
         md["choices"] = choices
+    if unit is not None:
+        md["unit"] = unit
     return md
 
 
@@ -70,19 +75,25 @@ class FilterSettings(_SettingsMixin):
 
     # --- Testing ---
     n_dsub: int = field(default=1, metadata=_meta(_CAT_TEST))  # DSUB connectors to loop
-    f_sample: float = field(default=25e6 / 4.0, metadata=_meta(_CAT_TEST))  # sample rate [Hz]
-    buffer_size: int = field(default=8192, metadata=_meta(_CAT_TEST))  # samples per capture
-    f_square: float = field(  # excitation square-wave freq [Hz]
-        default=(25e6 / 4.0) / (8192 * 10), metadata=_meta(_CAT_TEST)
+    f_sample: float = field(
+        default=25e6 / 4.0, metadata=_meta(_CAT_TEST, unit="Hz")
+    )  # sample rate
+    buffer_size: int = field(
+        default=8192, metadata=_meta(_CAT_TEST, unit="samples")
+    )  # samples per capture
+    f_square: float = field(  # excitation square-wave freq
+        default=(25e6 / 4.0) / (8192 * 10), metadata=_meta(_CAT_TEST, unit="Hz")
     )
-    amplitude: float = field(default=1.5, metadata=_meta(_CAT_TEST))  # step V_IN [V]
+    amplitude: float = field(default=1.5, metadata=_meta(_CAT_TEST, unit="V"))  # step V_IN
     invalid_pins: list[int] = field(
         default_factory=_default_invalid_pins, metadata=_meta(_CAT_TEST)
     )
     file_prefix: str = field(default="test", metadata=_meta(_CAT_TEST))
 
     # --- Digital processing ---
-    cutoff: float = field(default=2e5, metadata=_meta(_CAT_DSP))  # low-pass cutoff [Hz]
+    cutoff: float = field(
+        default=2e5, metadata=_meta(_CAT_DSP, unit="Hz")
+    )  # low-pass cutoff
     n_avg: int = field(default=5, metadata=_meta(_CAT_DSP))  # fits averaged per pin
 
     # --- Trigger (see core.measurements._capture) ---
@@ -93,9 +104,13 @@ class FilterSettings(_SettingsMixin):
     # mode until the operator presses Continue, then the point is skipped
     # (C=R=-1); the free-run itself records nothing.
     trigger_source: str = field(default="current", metadata=_meta(_CAT_TRIG, _TRIGGER_SOURCES))
-    trigger_level: float = field(default=0.4, metadata=_meta(_CAT_TRIG))  # trigger level [V]
+    trigger_level: float = field(
+        default=0.4, metadata=_meta(_CAT_TRIG, unit="V")
+    )  # trigger level
     trigger_slope: str = field(default="rising", metadata=_meta(_CAT_TRIG, _TRIGGER_SLOPES))
-    trigger_timeout: float = field(default=2.0, metadata=_meta(_CAT_TRIG))  # [s]; <=0 forever
+    trigger_timeout: float = field(
+        default=2.0, metadata=_meta(_CAT_TRIG, unit="s")
+    )  # <=0 forever
 
 
 @dataclass
@@ -104,8 +119,10 @@ class VoltageSettings(_SettingsMixin):
 
     # --- Testing ---
     n_rounds: int = field(default=4, metadata=_meta(_CAT_TEST))  # measurement rounds
-    f_sample: float = field(default=25e6, metadata=_meta(_CAT_TEST))  # sample rate [Hz]
-    buffer_size: int = field(default=8192, metadata=_meta(_CAT_TEST))
+    f_sample: float = field(
+        default=25e6, metadata=_meta(_CAT_TEST, unit="Hz")
+    )  # sample rate
+    buffer_size: int = field(default=8192, metadata=_meta(_CAT_TEST, unit="samples"))
     invalid_pins: list[int] = field(
         default_factory=_default_invalid_pins, metadata=_meta(_CAT_TEST)
     )
@@ -118,9 +135,13 @@ class ResistanceSettings(_SettingsMixin):
 
     # --- Testing ---
     n_rounds: int = field(default=1, metadata=_meta(_CAT_TEST))
-    f_sample: float = field(default=1e5, metadata=_meta(_CAT_TEST))  # sample rate [Hz]
-    buffer_size: int = field(default=8192, metadata=_meta(_CAT_TEST))
-    amplitude: float = field(default=1.5, metadata=_meta(_CAT_TEST))  # applied V_IN [V]
+    f_sample: float = field(
+        default=1e5, metadata=_meta(_CAT_TEST, unit="Hz")
+    )  # sample rate
+    buffer_size: int = field(default=8192, metadata=_meta(_CAT_TEST, unit="samples"))
+    amplitude: float = field(
+        default=1.5, metadata=_meta(_CAT_TEST, unit="V")
+    )  # applied V_IN
     invalid_pins: list[int] = field(
         default_factory=_default_invalid_pins, metadata=_meta(_CAT_TEST)
     )
@@ -128,18 +149,26 @@ class ResistanceSettings(_SettingsMixin):
 
     # --- Digital processing ---
     n_samples_for_avg: int = field(  # samples averaged for steady-state current
-        default=100, metadata=_meta(_CAT_DSP)
+        default=100, metadata=_meta(_CAT_DSP, unit="samples")
     )
 
     # --- Detection thresholds ---
-    r_short: float = field(default=10.0, metadata=_meta(_CAT_THRESH))  # <= -> shorted [Ohm]
-    r_high_imp: float = field(default=1e6, metadata=_meta(_CAT_THRESH))  # >= -> high-Z [Ohm]
+    r_short: float = field(
+        default=10.0, metadata=_meta(_CAT_THRESH, unit="Ω")
+    )  # <= -> shorted
+    r_high_imp: float = field(
+        default=1e6, metadata=_meta(_CAT_THRESH, unit="Ω")
+    )  # >= -> high-Z
 
     # --- Trigger (default: current channel Ch2 @ trigger_level) ---
     trigger_source: str = field(default="current", metadata=_meta(_CAT_TRIG, _TRIGGER_SOURCES))
-    trigger_level: float = field(default=0.4, metadata=_meta(_CAT_TRIG))  # trigger level [V]
+    trigger_level: float = field(
+        default=0.4, metadata=_meta(_CAT_TRIG, unit="V")
+    )  # trigger level
     trigger_slope: str = field(default="rising", metadata=_meta(_CAT_TRIG, _TRIGGER_SLOPES))
-    trigger_timeout: float = field(default=2.0, metadata=_meta(_CAT_TRIG))  # [s]; <=0 forever
+    trigger_timeout: float = field(
+        default=2.0, metadata=_meta(_CAT_TRIG, unit="s")
+    )  # <=0 forever
 
 
 # measurement key (== script stem) -> settings dataclass

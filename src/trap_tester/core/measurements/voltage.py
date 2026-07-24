@@ -15,6 +15,7 @@ import numpy as np
 import pandas as pd
 
 from trap_tester.core.reporter import MeasurementContext
+from trap_tester.core.appconfig import measurements_dir
 from trap_tester.core.settings import VoltageSettings, save_result
 from trap_tester.utils import (
     SW_ADC_TO_GND_IDX,
@@ -106,7 +107,8 @@ def _finalise(results: list[dict[str, Any]], s: VoltageSettings, ctx) -> pd.Data
     if s.file_prefix:
         timestr = t.strftime("%Y%m%d-%H%M%S")
         path = save_result(
-            df, s, f"results/{s.file_prefix}_v_meas_{timestr}.json", "measure_voltage"
+            df, s, measurements_dir() / f"{s.file_prefix}_v_meas_{timestr}.json",
+            "measure_voltage",
         )
         ctx.report.log(f"Saved {path}")
         ctx.report.status(f"Done — {len(df)} rows saved to {path.name}")

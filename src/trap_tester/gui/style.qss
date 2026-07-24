@@ -1,71 +1,87 @@
-/* Trap Tester palette: interactive elements green, viewers red. */
+/* Trap Tester palette (templated: placeholder tokens filled by gui/theme.py).
+   Interactive elements green, viewers red; light/dark share this template. */
 
 QWidget {
     font-size: 12px;
+    background: $window_bg;
+    color: $text;
 }
 
 #menuBar {
-    background: #3f6fb0;
+    background: $menu_bg;
 }
 
 QPushButton[role="menu"] {
     background: transparent;
-    color: white;
+    color: $menu_text;
     border: none;
     padding: 6px 14px;
     font-size: 14px;
 }
 QPushButton[role="menu"]:checked {
-    background: #2c5286;
+    background: $menu_sel;
     border-radius: 4px;
 }
 QPushButton[role="menu"]:hover {
-    background: #4a7cc0;
+    background: $menu_hover;
     border-radius: 4px;
 }
 
 /* Interactive controls — green */
 QPushButton[role="interactive"] {
-    background: #6cb46c;
-    color: #10250f;
-    border: 1px solid #4f954f;
+    background: $accent;
+    color: $accent_btn_text;
+    border: 1px solid $accent_border;
     border-radius: 4px;
     padding: 5px 10px;
 }
-QPushButton[role="interactive"]:hover { background: #7cc47c; }
-QPushButton[role="interactive"]:disabled { background: #b9d4b9; color: #6a806a; }
+QPushButton[role="interactive"]:hover { background: $accent_hover; }
+QPushButton[role="interactive"]:disabled {
+    background: $accent_disabled_bg; color: $accent_disabled_text;
+}
 
 QGroupBox[role="interactive"] {
-    border: 2px solid #6cb46c;
+    border: 2px solid $accent;
     border-radius: 6px;
     /* side/bottom margins keep the border off the window edge (else clipped) */
     margin: 8px 3px 3px 3px;
-    background: rgba(108, 180, 108, 0.08);
+    background: $accent_box_bg;
 }
 QGroupBox[role="interactive"]::title {
     subcontrol-origin: margin;
     left: 8px;
-    color: #3d7a3d;
+    color: $accent_title;
     font-weight: bold;
 }
 
 QListWidget[role="interactive"],
 QLineEdit[role="interactive"] {
-    border: 1px solid #6cb46c;
+    border: 1px solid $accent;
     border-radius: 3px;
-    background: white;
+    background: $input_bg;
+    color: $text;
 }
-QLabel[role="interactive"] { color: #3d7a3d; font-weight: bold; }
+QLabel[role="interactive"] { color: $accent_title; font-weight: bold; }
 QLabel[role="section"] {
-    color: #2c5286;
+    color: $section;
     font-weight: bold;
     margin-top: 6px;
-    border-bottom: 1px solid #6cb46c;
+    border-bottom: 1px solid $accent;
 }
+/* Static unit box shown to the right of a settings input (not an input). */
+QLabel[role="unit"] {
+    color: $unit_text;
+    background: $unit_bg;
+    border: 1px solid $unit_border;
+    border-radius: 3px;
+    padding: 1px 5px;
+    min-width: 20px;
+}
+QLabel[role="unit"]:disabled { color: $unit_text_disabled; }
 
 /* Viewers — red */
 QGroupBox[role="viewer"] {
-    border: 2px solid #e0492f;
+    border: 2px solid $viewer;
     border-radius: 6px;
     /* side/bottom margins keep the border off the window edge (else clipped) */
     margin: 8px 3px 3px 3px;
@@ -73,25 +89,35 @@ QGroupBox[role="viewer"] {
 QGroupBox[role="viewer"]::title {
     subcontrol-origin: margin;
     left: 8px;
-    color: #b83a20;
+    color: $viewer_title;
     font-weight: bold;
 }
 QLabel[role="viewer"] {
-    border: 2px solid #e0492f;
+    border: 2px solid $viewer;
     border-radius: 4px;
-    background: rgba(224, 73, 47, 0.08);
-    color: #b83a20;
+    background: $viewer_box_bg;
+    color: $viewer_title;
     padding: 6px;
     font-weight: bold;
 }
-QPlainTextEdit[role="viewer"] {
-    border: 2px solid #e0492f;
+/* Plot title shown above a matplotlib canvas (Qt label, not drawn on the axes). */
+QLabel[role="plotTitle"] { color: $viewer_title; font-weight: bold; }
+/* Warning strip above a layout canvas. */
+QLabel[role="warning"] {
+    color: $warn_text;
+    background: $warn_bg;
+    border: 1px solid $warn_border;
     border-radius: 4px;
-    background: #1e1e1e;
-    color: #e6e6e6;
+    padding: 3px;
+}
+QPlainTextEdit[role="viewer"] {
+    border: 2px solid $viewer;
+    border-radius: 4px;
+    background: $terminal_bg;
+    color: $terminal_text;
     font-family: monospace;
 }
 FigureCanvasQTAgg[role="viewer"] {
-    border: 2px solid #e0492f;
+    border: 2px solid $viewer;
     border-radius: 4px;
 }

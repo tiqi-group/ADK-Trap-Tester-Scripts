@@ -5,9 +5,9 @@ colouring each point by its verdict and shading the acceptable band. Pins with
 no numeric value (not detected / shorted) are shown as ``x`` markers along the
 bottom so they are still visible.
 
-Like the connector map, a result spanning several connectors is shown one
-connector at a time via a selector (hidden for single-connector results) so
-pins from different connectors never collide on the x-axis.
+A result spanning several connectors is shown one connector at a time; the
+connector selector lives in the Analysis panel (shared with the connector map),
+so pins from different connectors never collide on the x-axis.
 """
 
 from __future__ import annotations
@@ -16,17 +16,15 @@ import numpy as np
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
-from PySide6.QtWidgets import (
-    QComboBox,
-    QHBoxLayout,
-    QLabel,
-    QVBoxLayout,
-    QWidget,
-)
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from trap_tester.core.analysis import STATUS_INFO, AnalysisResult, Finding
+from trap_tester.gui import theme
 
-_TITLE_KW = dict(fontsize=10, fontweight="bold", color="#b83a20")
+
+def _title_kw() -> dict:
+    """Plot-title style, themed (colour tracks the active light/dark palette)."""
+    return dict(fontsize=10, fontweight="bold", color=theme.plot_title_color())
 
 
 class AnalysisView(QWidget):
@@ -37,19 +35,6 @@ class AnalysisView(QWidget):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
-        # Connector selector — shown only when a result spans >1 connector.
-        self._conn_row = QWidget()
-        conn_layout = QHBoxLayout(self._conn_row)
-        conn_layout.setContentsMargins(0, 0, 0, 0)
-        conn_layout.addWidget(QLabel("Connector:"))
-        self._conn_selector = QComboBox()
-        self._conn_selector.setProperty("role", "interactive")
-        self._conn_selector.currentIndexChanged.connect(self._on_connector_changed)
-        conn_layout.addWidget(self._conn_selector)
-        conn_layout.addStretch(1)
-        self._conn_row.setVisible(False)
-        layout.addWidget(self._conn_row)
-
         self.fig = Figure(figsize=(5, 3.2), layout="constrained")
         self.canvas = FigureCanvasQTAgg(self.fig)
         self.canvas.setProperty("role", "viewer")
@@ -57,7 +42,17 @@ class AnalysisView(QWidget):
         layout.addWidget(self.canvas)
 
         self._result: AnalysisResult | None = None
+        self._connector: int | None = None
+        self._clear_msg = ""
         self.clear()
+
+    def apply_theme(self) -> None:
+        """Recolour + re-render with the active theme (live theme switch)."""
+        self.fig.set_facecolor(theme.fig_bg())
+        if self._result is not None:
+            self.show_result(self._result, self._connector)
+        else:
+            self.clear(self._clear_msg)
 
     def save_view(self, path: str) -> None:
         """Save the plot exactly as shown (current axes/limits) to an image file.
@@ -71,38 +66,20 @@ class AnalysisView(QWidget):
 
     def clear(self, message: str = "Run an analysis to see the result.") -> None:
         self._result = None
-        self._conn_row.setVisible(False)
+        self._clear_msg = message
         self.ax.clear()
-        self.ax.set_title(message, **_TITLE_KW)
+        theme.style_axes(self.fig, self.ax)
+        self.ax.set_title(message, **_title_kw())
         self.ax.set_xticks([])
         self.ax.set_yticks([])
         self.canvas.draw_idle()
 
-    def show_result(self, result: AnalysisResult) -> None:
-        """Store ``result`` and plot it; offer a selector if multi-connector."""
+    def show_result(self, result: AnalysisResult, connector: int | None = None) -> None:
+        """Plot ``result``, restricted to ``connector`` (all connectors if None)."""
         self._result = result
-        connectors = sorted({int(f.connector) for f in result.findings})
-
-        self._conn_selector.blockSignals(True)
-        self._conn_selector.clear()
-        for c in connectors:
-            self._conn_selector.addItem(f"{c}", c)
-        self._conn_selector.setCurrentIndex(0)
-        self._conn_selector.blockSignals(False)
-        self._conn_row.setVisible(len(connectors) > 1)
-
-        self._render_connector(connectors[0] if connectors else None)
-
-    def _on_connector_changed(self, index: int) -> None:
-        if index < 0 or self._result is None:
-            return
-        self._render_connector(int(self._conn_selector.itemData(index)))
-
-    def _render_connector(self, connector: int | None) -> None:
-        if self._result is None:
-            return
+        self._connector = connector
         findings = [
-            f for f in self._result.findings
+            f for f in result.findings
             if connector is None or int(f.connector) == connector
         ]
         self._plot(findings)
@@ -112,6 +89,7 @@ class AnalysisView(QWidget):
         assert result is not None
         ax = self.ax
         ax.clear()
+        theme.style_axes(self.fig, ax)
         ax.set_yscale("log" if result.log_y else "linear")
 
         finite = [f for f in findings if np.isfinite(f.value)]
@@ -154,7 +132,7 @@ class AnalysisView(QWidget):
         n_faults = sum(1 for f in findings if f.status != "ok")
         ax.set_title(
             f"{result.title} — {n_faults} fault(s) / {len(findings)} pins",
-            **_TITLE_KW,
+            **_title_kw(),
         )
         ax.set_xlabel("DSUB pin")
         ax.set_ylabel(result.value_label)

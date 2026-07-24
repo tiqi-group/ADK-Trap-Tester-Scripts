@@ -6,6 +6,7 @@ The current panel's selector is shown in bold, matching the mock's top bar.
 from __future__ import annotations
 
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QHBoxLayout,
     QMainWindow,
@@ -15,12 +16,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from trap_tester.gui import theme
+
 from trap_tester.gui.panels.analysis_panel import AnalysisPanel
 from trap_tester.gui.panels.device_panel import DevicePanel
 from trap_tester.gui.panels.interfaces_panel import InterfacesPanel
 from trap_tester.gui.panels.measurement_panel import MeasurementPanel
 from trap_tester.gui.panels.placeholder import PlaceholderPanel
 from trap_tester.gui.panels.selftest_panel import SelfTestPanel
+from trap_tester.gui.panels.settings_panel import SettingsPanel
 
 _PANELS = [
     ("Measurement", None),
@@ -28,6 +32,7 @@ _PANELS = [
     ("Interfaces", None),
     ("Device Info", None),
     ("Self-Test", None),
+    ("Settings", None),
 ]
 
 
@@ -54,13 +59,40 @@ class MainWindow(QMainWindow):
             "Interfaces": InterfacesPanel,
             "Device Info": DevicePanel,
             "Self-Test": SelfTestPanel,
+            "Settings": SettingsPanel,
         }
+        self._panels: dict[str, QWidget] = {}
         for name, note in _PANELS:
             factory = live.get(name)
             widget = factory() if factory else PlaceholderPanel(name, note or "")
+            self._panels[name] = widget
             self._stack.addWidget(widget)
 
+        # When settings change, re-read paths/folders in the panels that use them.
+        settings = self._panels.get("Settings")
+        if isinstance(settings, SettingsPanel):
+            settings.changed.connect(self._on_settings_changed)
+            settings.themeChanged.connect(self._on_theme_changed)
+
         self._select(0)
+
+    def _on_settings_changed(self) -> None:
+        """Refresh panels that read configurable paths / layout folders."""
+        for name in ("Measurement", "Analysis", "Interfaces"):
+            panel = self._panels.get(name)
+            reload_fn = getattr(panel, "reload_settings", None)
+            if callable(reload_fn):
+                reload_fn()
+
+    def _on_theme_changed(self, name: str) -> None:
+        """Apply a light/dark switch live: stylesheet + every matplotlib canvas."""
+        app = QApplication.instance()
+        if app is not None:
+            theme.apply(app, name)  # active theme + stylesheet + rcParams
+        for widget in self.findChildren(QWidget):
+            apply_fn = getattr(widget, "apply_theme", None)
+            if callable(apply_fn):
+                apply_fn()
 
     def _build_menu_bar(self) -> QWidget:
         bar = QWidget()

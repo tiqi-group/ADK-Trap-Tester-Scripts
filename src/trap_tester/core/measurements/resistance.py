@@ -20,6 +20,7 @@ from trap_tester.core.measurements._capture import (
     triggered_capture,
 )
 from trap_tester.core.reporter import MeasurementContext
+from trap_tester.core.appconfig import measurements_dir
 from trap_tester.core.settings import ResistanceSettings, save_result
 from trap_tester.utils import (
     GAIN_FRONTEND,
@@ -180,7 +181,8 @@ def _finalise(results: list[dict[str, Any]], s: ResistanceSettings, ctx) -> pd.D
     if s.file_prefix:
         timestr = t.strftime("%Y%m%d-%H%M%S")
         path = save_result(
-            df, s, f"results/{s.file_prefix}_r_meas_{timestr}.json", "measure_resistance"
+            df, s, measurements_dir() / f"{s.file_prefix}_r_meas_{timestr}.json",
+            "measure_resistance",
         )
         ctx.report.log(f"Saved {path}")
         ctx.report.status(f"Done — {len(df)} rows saved to {path.name}")

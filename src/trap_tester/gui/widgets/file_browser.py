@@ -30,11 +30,13 @@ class FileBrowser(QWidget):
         directory: str | Path | None = None,
         pattern: str = "*.json",
         entries: list[tuple[str, str]] | None = None,
+        recursive: bool = False,
     ) -> None:
         super().__init__()
         self._dir = Path(directory) if directory is not None else None
         self._pattern = pattern
         self._entries = entries
+        self._recursive = recursive
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(2, 2, 2, 2)
@@ -56,6 +58,11 @@ class FileBrowser(QWidget):
         self._list.itemDoubleClicked.connect(lambda it: self.opened.emit(it.data(256)))
         self.refresh()
 
+    def set_directory(self, directory: str | Path) -> None:
+        """Point the browser at a different folder and re-list it."""
+        self._dir = Path(directory)
+        self.refresh()
+
     def refresh(self) -> None:
         self._list.clear()
         if self._entries is not None:
@@ -66,7 +73,13 @@ class FileBrowser(QWidget):
             return
         if self._dir is None or not self._dir.exists():
             return
-        for path in sorted(self._dir.glob(self._pattern), reverse=True):
-            item = QListWidgetItem(path.name)
+        # Recursive browsers descend into sub-folders and show the path relative
+        # to the root so files with the same name in different folders stay
+        # distinct; flat browsers show the bare file name.
+        matches = self._dir.rglob(self._pattern) if self._recursive \
+            else self._dir.glob(self._pattern)
+        for path in sorted(matches, reverse=True):
+            label = str(path.relative_to(self._dir)) if self._recursive else path.name
+            item = QListWidgetItem(label)
             item.setData(256, str(path.resolve()))  # Qt.UserRole == 256
             self._list.addItem(item)

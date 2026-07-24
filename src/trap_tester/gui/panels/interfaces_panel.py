@@ -18,6 +18,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QGroupBox,
@@ -32,6 +33,7 @@ from PySide6.QtWidgets import (
 )
 
 from trap_tester.core.layout import (
+    TESTER_CONNECTORS,
     AnnotationSet,
     Mapping,
     apply_to,
@@ -43,6 +45,7 @@ from trap_tester.core.layout import (
     load_csv,
     load_layout,
     mapping_options,
+    tile_connector_layouts,
     user_layout_options,
     user_layouts_dir,
 )
@@ -69,6 +72,13 @@ class InterfacesPanel(QWidget):
         splitter.setSizes([320, 900])
         outer.addWidget(splitter)
 
+        self._refresh_interfaces()
+        self._refresh_mappings()
+        self._update_view()
+
+    def reload_settings(self) -> None:
+        """Re-scan the layout / mapping folders (called after Settings changes)."""
+        self._mapping_cache.clear()
         self._refresh_interfaces()
         self._refresh_mappings()
         self._update_view()
@@ -113,10 +123,18 @@ class InterfacesPanel(QWidget):
         conn_row.addWidget(QLabel("Connector:"))
         self._conn_spin = QSpinBox()
         self._conn_spin.setProperty("role", "interactive")
-        self._conn_spin.setRange(0, 99)  # DSUB connectors are 0-indexed
+        self._conn_spin.setRange(0, TESTER_CONNECTORS - 1)  # 0-indexed; bounded
         self._conn_spin.valueChanged.connect(self._update_view)
         conn_row.addWidget(self._conn_spin)
         conn_row.addStretch(1)
+        self._show_all = QCheckBox("Show all")
+        self._show_all.setProperty("role", "interactive")
+        self._show_all.setToolTip(
+            "Render every connector instance at once (zoom / pan to inspect).\n"
+            "Connectors come from the mapping when one is loaded, else a default set."
+        )
+        self._show_all.toggled.connect(self._update_view)
+        conn_row.addWidget(self._show_all)
         sel_v.addLayout(conn_row)
 
         map_row = QHBoxLayout()
@@ -204,12 +222,31 @@ class InterfacesPanel(QWidget):
         self._iface_selector.setCurrentIndex(idx if idx >= 0 else 0)
         self._iface_selector.blockSignals(False)
 
-    def _current_layout(self):
+    def _connector_set(self, mapping: Mapping | None) -> list[int]:
+        """Which connectors "Show all" renders.
+
+        A loaded mapping defines the exact set (its nets' connectors); without a
+        mapping there is no inherent bound, so fall back to the tester's connector
+        count so the tiled view stays finite.
+        """
+        if mapping is not None:
+            conns = sorted({n.connector for n in mapping.nets})
+            return conns or [0]
+        return list(range(TESTER_CONNECTORS))
+
+    def _current_layout(self, mapping: Mapping | None):
         token = self._iface_selector.currentData()
-        if token == "builtin:dsub50":
-            base = dsub50_layout_for_connector(self._conn_spin.value())
-        elif token == "builtin:fpc":
-            base = fpc_layout_for_connector(self._conn_spin.value())
+        if isinstance(token, str) and token.startswith("builtin:"):
+            is_dsub = token == "builtin:dsub50"
+            factory = dsub50_layout_for_connector if is_dsub else fpc_layout_for_connector
+            if self._show_all.isChecked():
+                conns = self._connector_set(mapping)
+                label = ("DSUB-50" if is_dsub else "FPC ribbon") + " — all connectors"
+                base = tile_connector_layouts(
+                    [factory(c) for c in conns], conns, label
+                )
+            else:
+                base = factory(self._conn_spin.value())
         else:
             try:
                 # Custom layouts are shown whole — they may span several connectors
@@ -223,7 +260,6 @@ class InterfacesPanel(QWidget):
                 )
                 self._iface_selector.setCurrentIndex(0)
                 base = dsub50_layout_for_connector(self._conn_spin.value())
-        mapping = self._selected_mapping()
         if mapping is None:
             self._view.set_warning(None)
             return base
@@ -274,8 +310,17 @@ class InterfacesPanel(QWidget):
         # The connector picker only applies to the single-connector built-ins;
         # custom layouts carry their own connectors and are drawn whole.
         is_builtin = isinstance(token, str) and token.startswith("builtin:")
-        self._conn_spin.setEnabled(is_builtin)
-        self._view.set_layout(self._current_layout())
+        mapping = self._selected_mapping()
+        show_all = self._show_all.isChecked()
+        self._show_all.setEnabled(is_builtin)
+        # single-connector picker is moot for custom layouts and when showing all
+        self._conn_spin.setEnabled(is_builtin and not show_all)
+        # bound the picker: a mapping defines the connector set, else a default
+        if mapping is not None:
+            self._conn_spin.setMaximum(max((n.connector for n in mapping.nets), default=0))
+        else:
+            self._conn_spin.setMaximum(TESTER_CONNECTORS - 1)
+        self._view.set_layout(self._current_layout(mapping))
         self._update_summary()
 
     def _import_layout(self) -> None:
@@ -375,7 +420,7 @@ class InterfacesPanel(QWidget):
         default = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
         token = self._iface_selector.currentData()
         if isinstance(token, str) and token.startswith("builtin:"):
-            default += f"-conn{self._conn_spin.value()}"
+            default += "-all" if self._show_all.isChecked() else f"-conn{self._conn_spin.value()}"
         path, _ = QFileDialog.getSaveFileName(
             self, "Save view", f"{default}.png", "PNG image (*.png)"
         )

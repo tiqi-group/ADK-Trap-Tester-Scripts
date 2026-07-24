@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 from trap_tester.core.layout import Circle, Drawing, Line, Polyline, Rect, Text
 from trap_tester.core.layout.decoration import DECORATION_INFO
 from trap_tester.core.layout.geometry import in_rot_rect, point_in_poly
+from trap_tester.gui import theme
 
 if TYPE_CHECKING:
     from trap_tester.core.layout.interface import PinMark
@@ -100,6 +101,8 @@ class LayoutCanvas(QWidget):
         # to a narrower rectangle than the data spanned).
         self.ax = self.fig.add_axes((0.0, 0.0, 1.0, 1.0))
         self._pins: list[PinMark] = []
+        self._drawing: Drawing | None = None  # last drawing, for a theme re-render
+        self._clear_msg = ""  # last clear message, ditto
         self._label_artists: list = []  # in-pad labels, redrawn level-of-detail
         self._bg_patches: list = []   # background patches batched into a collection
         self._pin_patches: list = []  # pin patches batched into a collection
@@ -125,17 +128,14 @@ class LayoutCanvas(QWidget):
         root.addWidget(self._controls_bar)
         self._title_label = QLabel("")
         self._title_label.setAlignment(Qt.AlignCenter)
-        self._title_label.setStyleSheet("color: #b83a20; font-weight: bold;")
+        self._title_label.setProperty("role", "plotTitle")  # themed via stylesheet
         root.addWidget(self._title_label)
         # A warning strip (e.g. "this mapping doesn't apply to this interface"),
         # hidden until a subclass/panel sets a message via set_warning().
         self._warning_label = QLabel("")
         self._warning_label.setAlignment(Qt.AlignCenter)
         self._warning_label.setWordWrap(True)
-        self._warning_label.setStyleSheet(
-            "color: #8a6d00; background: #fff4d6; border: 1px solid #e0c060;"
-            " border-radius: 4px; padding: 3px;"
-        )
+        self._warning_label.setProperty("role", "warning")  # themed via stylesheet
         self._warning_label.setVisible(False)
         root.addWidget(self._warning_label)
         mid = QHBoxLayout()
@@ -177,14 +177,25 @@ class LayoutCanvas(QWidget):
             raise OSError(f"could not write image to {path}")
 
     # ---- public API --------------------------------------------------------
+    def apply_theme(self) -> None:
+        """Re-render with the active theme's colours (live theme switch)."""
+        self.fig.set_facecolor(theme.fig_bg())
+        if self._drawing is not None:
+            self.show_drawing(self._drawing)
+        else:
+            self.clear(self._clear_msg)
+
     def clear(self, message: str) -> None:
         self._pins = []
+        self._drawing = None
+        self._clear_msg = message
         self._label_artists = []  # removed by ax.clear() below
         self._fit_lims = None
         self._preserved_lims = None  # nothing to zoom into
         self._title_label.setText(message)
         self._render_legend([])
         self.ax.clear()
+        theme.style_axes(self.fig, self.ax)
         self.ax.set_xticks([])
         self.ax.set_yticks([])
         self._make_annot()  # ax.clear() removed it
@@ -227,8 +238,11 @@ class LayoutCanvas(QWidget):
         self._preserved_lims = None
 
     def show_drawing(self, drawing: Drawing) -> None:
+        self._drawing = drawing
+        self._clear_msg = ""
         ax = self.ax
         ax.clear()
+        theme.style_axes(self.fig, ax)
         self._label_artists = []  # ax.clear() removed the previous label artists
         # The axes fills the whole canvas (aspect="auto"); we keep pins circular
         # ourselves in _apply_lims by matching data-per-pixel in x and y. This
@@ -299,10 +313,11 @@ class LayoutCanvas(QWidget):
 
     # ---- drawing helpers ---------------------------------------------------
     def _make_annot(self) -> None:
+        st = theme.annot_style()
         self._annot = self.ax.annotate(
             "", xy=(0, 0), xytext=(12, 12), textcoords="offset points",
-            fontsize=8, ha="left", va="bottom", zorder=10,
-            bbox=dict(boxstyle="round", fc="#ffffe0", ec="#888", alpha=0.95),
+            fontsize=8, ha="left", va="bottom", zorder=10, color=st["text"],
+            bbox=dict(boxstyle="round", fc=st["fc"], ec=st["ec"], alpha=0.95),
         )
         self._annot.set_visible(False)
 
@@ -347,15 +362,22 @@ class LayoutCanvas(QWidget):
             ax.text(prim.x, prim.y, prim.text, fontsize=prim.size, color=prim.color,
                     ha=prim.ha, va=prim.va, rotation=prim.rotation, zorder=2)
 
+    @staticmethod
+    def _pin_colors(pin: PinMark) -> tuple[str, str]:
+        """A pin's ``(fill, stroke)`` — faint "no data" pads follow the theme."""
+        faint = theme.faint_for(pin.status)
+        return faint if faint else (pin.fill, pin.stroke)
+
     def _draw_pin(self, pin: PinMark) -> None:
         ax = self.ax
+        fill, stroke = self._pin_colors(pin)
         # Labels are NOT drawn here — a separate level-of-detail pass
         # (_render_labels) draws them for large, on-screen pads only. Patches are
         # collected into ``_pin_patches`` and drawn as one PatchCollection.
         if pin.shape == "poly" and pin.points:
             # an arbitrary electrode outline (e.g. an ion-trap electrode)
             self._pin_patches.append(MplPolygon(
-                pin.points, closed=True, facecolor=pin.fill, edgecolor=pin.stroke,
+                pin.points, closed=True, facecolor=fill, edgecolor=stroke,
                 lw=0.8))
             return
         if pin.shape == "finger":
@@ -363,7 +385,7 @@ class LayoutCanvas(QWidget):
             length, width = 2 * pin.r, 2 * pin.r * _FINGER_ASPECT
             patch = MplRect(
                 (pin.x - length / 2, pin.y - width / 2), length, width,
-                facecolor=pin.fill, edgecolor=pin.stroke, lw=0.5, zorder=3)
+                facecolor=fill, edgecolor=stroke, lw=0.5, zorder=3)
             patch.set_transform(
                 Affine2D().rotate_deg_around(pin.x, pin.y, pin.rot) + ax.transData)
             ax.add_patch(patch)
@@ -371,10 +393,10 @@ class LayoutCanvas(QWidget):
         if pin.shape == "rect":
             self._pin_patches.append(MplRect(
                 (pin.x - pin.r, pin.y - pin.r), 2 * pin.r, 2 * pin.r,
-                facecolor=pin.fill, edgecolor=pin.stroke, lw=1.1))
+                facecolor=fill, edgecolor=stroke, lw=1.1))
         else:
             self._pin_patches.append(MplCircle(
-                (pin.x, pin.y), pin.r, facecolor=pin.fill, edgecolor=pin.stroke,
+                (pin.x, pin.y), pin.r, facecolor=fill, edgecolor=stroke,
                 lw=1.1))
 
     def _render_labels(self) -> None:
@@ -404,9 +426,10 @@ class LayoutCanvas(QWidget):
         if len(visible) > _MAX_LABELS:  # too dense to read; wait for more zoom
             return
         for pin in visible:
+            fill, _ = self._pin_colors(pin)  # contrast against the drawn fill
             self._label_artists.append(self.ax.text(
                 pin.x, pin.y, pin.label, fontsize=5.5, ha="center", va="center",
-                color=text_color_for(pin.fill), zorder=4))
+                color=text_color_for(fill), zorder=4))
 
     # ---- hit-test + hover --------------------------------------------------
     def _pin_at(self, event) -> PinMark | None:

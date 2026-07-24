@@ -9,10 +9,15 @@ from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
+from trap_tester.gui import theme
 from trap_tester.utils import R_SENSE, SENSE_MAG
 
-_TITLE_KW = dict(fontsize=10, fontweight="bold", color="#b83a20")
 _CURRENT_MA_PER_RAW = 1e3 / (R_SENSE * SENSE_MAG)  # raw sense volts -> mA
+
+
+def _title_kw() -> dict:
+    """Plot-title style, themed (colour tracks the active light/dark palette)."""
+    return dict(fontsize=10, fontweight="bold", color=theme.plot_title_color())
 
 
 @dataclass(frozen=True)
@@ -149,10 +154,17 @@ class ScopeCanvas(QWidget):
             canvas._data_range = None
             _clear_twin(canvas)
             canvas.ax.clear()
-            canvas.ax.set_title(text, **_TITLE_KW)
+            theme.style_axes(canvas.fig, canvas.ax)
+            canvas.ax.set_title(text, **_title_kw())
             canvas.ax.set_xticks([])
             canvas.ax.set_yticks([])
             canvas.draw_idle()
+
+    def apply_theme(self) -> None:
+        """Recolour the figures and redraw idle axes for a live theme switch."""
+        for canvas in (self.canvas_ch1, self.canvas_ch2):
+            canvas.fig.set_facecolor(theme.fig_bg())
+        self._init_axes()
 
     def _init_axes(self) -> None:
         for canvas, ch, spec in (
@@ -162,7 +174,8 @@ class ScopeCanvas(QWidget):
             canvas._data_range = None  # start a fresh y-scale for the new run
             _clear_twin(canvas)
             canvas.ax.clear()
-            canvas.ax.set_title(f"{ch} · {spec.name} (auto-detect): —", **_TITLE_KW)
+            theme.style_axes(canvas.fig, canvas.ax)
+            canvas.ax.set_title(f"{ch} · {spec.name} (auto-detect): —", **_title_kw())
             canvas.ax.set_xlabel("Time [ms]")
             canvas.ax.set_ylabel(f"{spec.name} [{spec.unit}]")
             canvas.ax.grid(True, alpha=0.3)
@@ -190,6 +203,7 @@ class ScopeCanvas(QWidget):
         settled = float(np.mean(data[-100:])) if data.size >= 100 else float(np.mean(data))
         peak = float(np.max(np.abs(data))) if data.size else 0.0
         canvas.ax.clear()
+        theme.style_axes(canvas.fig, canvas.ax)
         main_line, = canvas.ax.plot(
             t_ms, data, color=spec.color, lw=0.8, zorder=2,
             label=f"{spec.name} [{spec.unit}]")
@@ -198,7 +212,7 @@ class ScopeCanvas(QWidget):
         canvas.ax.set_title(
             f"{ch} · {spec.name} (auto-detect): settled {settled:.3f} {spec.unit}, "
             f"peak {peak:.3f} {spec.unit}",
-            **_TITLE_KW,
+            **_title_kw(),
         )
         canvas.ax.grid(True, alpha=0.3)
 
@@ -248,20 +262,52 @@ class WaveformPreview(QWidget):
         self.canvas = _MplCanvas(height=1.6)
         self.canvas.setProperty("role", "viewer")
         layout.addWidget(self.canvas)
+        self._last_args: tuple | None = None  # for a theme re-render
 
-    def update_preview(self, f_square: float, amplitude: float, gain: float = 2.0) -> None:
+    def apply_theme(self) -> None:
+        """Recolour + redraw the preview with the active theme (live switch)."""
+        self.canvas.fig.set_facecolor(theme.fig_bg())
+        if self._last_args is not None:
+            self.update_preview(*self._last_args)
+
+    def update_preview(
+        self,
+        f_square: float,
+        amplitude: float,
+        gain: float = 2.0,
+        trigger_level: float = 0.4,
+        trigger_slope: str = "rising",
+    ) -> None:
+        self._last_args = (f_square, amplitude, gain, trigger_level, trigger_slope)
         ax = self.canvas.ax
         ax.clear()
-        periods = 3.0
+        theme.style_axes(self.canvas.fig, ax)
+        periods = 3
         n = 2000
-        t = np.linspace(0, periods / max(f_square, 1e-9), n)
-        # generator output; frontend applies ``gain`` -> applied V_IN
+        period = 1.0 / max(f_square, 1e-9)
+        t = np.linspace(0.0, periods * period, n)
+        # generator output; frontend applies ``gain`` -> applied V_IN. Three periods,
+        # phase-shifted 90 deg (``-cos``) so each period starts low, rises at T/4 and
+        # falls at 3T/4 — edges clear of the plot borders.
         offset = 0.5 * amplitude / gain
         amp = 0.5 * amplitude / gain
-        wave = gain * (offset + amp * np.sign(np.sin(2 * np.pi * f_square * t)))
-        ax.plot(t * 1e3, wave, color="#1f77b4", lw=1.0, label="V_IN applied")
-        ax.axhline(0.4, color="#d62728", ls="--", lw=0.8, label="trigger 0.4 V")
+        wave = gain * (offset - amp * np.sign(np.cos(2 * np.pi * f_square * t)))
+        ax.plot(t * 1e3, wave, color="#1f77b4", lw=1.3, label="V_IN applied")
+        ax.axhline(
+            trigger_level, color="#d62728", ls="--", lw=0.8,
+            label=f"trigger {trigger_level:g} V",
+        )
+        # Trigger markers: a small triangle sitting on the edge that fires, at the
+        # trigger level (up = rising, down = falling, both for "either"). Drawn on
+        # the FIRST period's edges, in-plot, so they never collide with the legend.
+        t_rise, t_fall = 0.25 * period * 1e3, 0.75 * period * 1e3
+        tri = {"ms": 10, "mec": "#a01b1a", "mfc": "#d62728", "zorder": 5}
+        if trigger_slope in ("rising", "either"):
+            ax.plot([t_rise], [trigger_level], marker="^", **tri)
+        if trigger_slope in ("falling", "either"):
+            ax.plot([t_fall], [trigger_level], marker="v", **tri)
         ax.set(xlabel="Time [ms]", ylabel="V")
+        ax.set_ylim(-0.2 * amplitude, 1.3 * amplitude)
         ax.grid(True, alpha=0.3)
         ax.legend(fontsize=6, loc="center left", bbox_to_anchor=(1.02, 0.5))
         self.canvas.draw_idle()

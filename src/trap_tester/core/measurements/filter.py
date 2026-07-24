@@ -30,6 +30,7 @@ from trap_tester.core.measurements._capture import (
     triggered_capture,
 )
 from trap_tester.core.reporter import MeasurementContext
+from trap_tester.core.appconfig import measurements_dir
 from trap_tester.core.settings import FilterSettings, save_result
 from trap_tester.utils import (
     EN_DAC1_IDX,
@@ -260,7 +261,7 @@ def run_filter_measurement(ctx: MeasurementContext) -> pd.DataFrame:
     """Characterise attached RC filters across the configured DSUB connectors.
 
     Returns the assembled results DataFrame; also writes a settings+data JSON
-    into ``results/`` when ``settings.file_prefix`` is set.
+    into ``results/measurements/`` when ``settings.file_prefix`` is set.
     """
     s: FilterSettings = ctx.settings
     io, wavegen, scope = _init_device(ctx.device)
@@ -318,7 +319,8 @@ def _finalise(results: list[dict[str, Any]], s: FilterSettings, ctx) -> pd.DataF
     if s.file_prefix:
         timestr = t.strftime("%Y%m%d-%H%M%S")
         path = save_result(
-            df, s, f"results/{s.file_prefix}_filter_test_{timestr}.json", "measure_filter"
+            df, s, measurements_dir() / f"{s.file_prefix}_filter_test_{timestr}.json",
+            "measure_filter",
         )
         ctx.report.log(f"Saved {path}")
         ctx.report.status(f"Done — {len(df)} rows saved to {path.name}")

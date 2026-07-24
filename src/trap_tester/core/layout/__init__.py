@@ -14,6 +14,8 @@ on the fly otherwise.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 from trap_tester.core.layout.annotation import (
     ANNOTATION_STATES,
     Annotation,
@@ -50,6 +52,10 @@ from trap_tester.core.layout.primitives import (
     Rect,
     Text,
     primitive_from_dict,
+)
+from trap_tester.core.layout.tiling import (
+    TESTER_CONNECTORS,
+    tile_connector_layouts,
 )
 from trap_tester.core.layout.store import (
     add_layout_dir,
@@ -148,35 +154,54 @@ def layout_for(measurement: str | None, connector: int = 0) -> InterfaceLayout |
     return factory(connector) if factory else None
 
 
-def user_layout_options() -> list[tuple[str, str]]:
-    """Custom layouts as ``(display_name, path)`` pairs for a GUI selector.
+def _folder_qualifier(path: Path) -> str:
+    """A short label distinguishing files that share a stem.
 
-    When the same file name appears in more than one search folder (e.g. the
-    writable store and a private-repo folder), the display name is qualified with
-    the containing folder so the two entries can be told apart.
+    Discovery is recursive, so two files with the same name can sit in different
+    sub-folders of the (possibly different) search dirs. Qualify by the path from
+    the containing search folder down to the file's directory — e.g. a file at
+    ``<store>/hawk3/buzzard.csv`` reads ``buzzard  (store/hawk3)`` — falling back
+    to the immediate parent's name when no search dir contains it.
     """
-    paths = list_user_layouts()
+    for root in layout_search_dirs():
+        try:
+            rel = path.relative_to(root)
+        except ValueError:
+            continue
+        sub = rel.parent  # drop the file name
+        tail = root.name if sub == Path(".") else f"{root.name}/{sub.as_posix()}"
+        return tail
+    return path.parent.name
+
+
+def _named_options(paths: list[Path]) -> list[tuple[str, str]]:
+    """``(display_name, path)`` pairs; colliding stems get a folder qualifier."""
     stems = [p.stem for p in paths]
     dupes = {s for s in stems if stems.count(s) > 1}
     return [
-        (f"{p.stem}  ({p.parent.name})" if p.stem in dupes else p.stem, str(p))
+        (f"{p.stem}  ({_folder_qualifier(p)})" if p.stem in dupes else p.stem, str(p))
         for p in paths
     ]
+
+
+def user_layout_options() -> list[tuple[str, str]]:
+    """Custom layouts as ``(display_name, path)`` pairs for a GUI selector.
+
+    When the same file name appears more than once (a different search folder or a
+    different sub-folder — discovery is recursive), the display name is qualified
+    with the containing sub-path so the entries can be told apart.
+    """
+    return _named_options(list_user_layouts())
 
 
 def mapping_options() -> list[tuple[str, str]]:
     """Cross-interface mapping CSVs as ``(display_name, path)`` pairs for a selector.
 
-    Discovered from the custom-layout search folders; colliding file names are
-    qualified with the containing folder, mirroring :func:`user_layout_options`.
+    Discovered recursively from the custom-layout search folders; colliding file
+    names are qualified with the containing sub-path, mirroring
+    :func:`user_layout_options`.
     """
-    paths = list_mapping_files()
-    stems = [p.stem for p in paths]
-    dupes = {s for s in stems if stems.count(s) > 1}
-    return [
-        (f"{p.stem}  ({p.parent.name})" if p.stem in dupes else p.stem, str(p))
-        for p in paths
-    ]
+    return _named_options(list_mapping_files())
 
 
 def filter_layout_connector(
@@ -214,6 +239,7 @@ __all__ = [
     "Rect",
     "Slot",
     "SlotShape",
+    "TESTER_CONNECTORS",
     "Text",
     "add_layout_dir",
     "apply_to",
@@ -250,6 +276,7 @@ __all__ = [
     "primitive_from_dict",
     "remove_layout_dir",
     "slot_pins",
+    "tile_connector_layouts",
     "user_layout_options",
     "user_layouts_dir",
 ]

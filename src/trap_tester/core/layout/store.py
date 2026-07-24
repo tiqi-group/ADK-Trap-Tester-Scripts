@@ -76,6 +76,16 @@ def ensure_user_layouts_dir() -> Path:
     return path
 
 
+def app_data_dir() -> Path:
+    """The per-user data root for this app (parent of the writable layouts store).
+
+    Config files (the extra-folder list, the app settings) live here. It tracks
+    ``TRAP_TESTER_LAYOUTS_DIR`` the same way the store does, so pointing the store
+    at a temp dir (e.g. in tests) isolates the config alongside it.
+    """
+    return user_layouts_dir().parent
+
+
 def _config_path() -> Path:
     """Where the persisted extra-folder list lives (next to the writable store)."""
     return user_layouts_dir().parent / _CONFIG_NAME
@@ -157,25 +167,30 @@ def remove_layout_dir(path: str | Path) -> None:
 
 
 def list_user_layouts() -> list[Path]:
-    """Every ``*.json`` across all search dirs, sorted per dir (empty if none)."""
-    out: list[Path] = []
-    for directory in layout_search_dirs():
-        if directory.exists():
-            out.extend(sorted(directory.glob("*.json")))
-    return out
+    """Every ``*.json`` under all search dirs, recursively (sorted per dir).
 
-
-def list_mapping_files() -> list[Path]:
-    """Every ``*.csv`` across all search dirs, sorted per dir (empty if none).
-
-    Mapping CSVs live alongside the custom layouts they wire together, so they are
-    discovered from the same search folders (see :mod:`trap_tester.core.layout
-    .mapping`).
+    Discovery descends into sub-folders (``rglob``), so a search folder can be
+    organised into sub-directories (e.g. per trap / per project).
     """
     out: list[Path] = []
     for directory in layout_search_dirs():
         if directory.exists():
-            out.extend(sorted(directory.glob("*.csv")))
+            out.extend(sorted(directory.rglob("*.json")))
+    return out
+
+
+def list_mapping_files() -> list[Path]:
+    """Every ``*.csv`` under all search dirs, recursively (sorted per dir).
+
+    Mapping CSVs live alongside the custom layouts they wire together, so they are
+    discovered from the same search folders (see :mod:`trap_tester.core.layout
+    .mapping`). Discovery descends into sub-folders (``rglob``), matching
+    :func:`list_user_layouts`.
+    """
+    out: list[Path] = []
+    for directory in layout_search_dirs():
+        if directory.exists():
+            out.extend(sorted(directory.rglob("*.csv")))
     return out
 
 
