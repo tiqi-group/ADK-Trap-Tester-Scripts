@@ -435,8 +435,8 @@ def test_multi_shape_slot_expands_to_one_pin_per_shape():
     assert {p.status for p in drawing.pins} == {"ok"}
     assert {(p.connector, p.pin, p.channel) for p in drawing.pins} == {(0, 1, 99)}
     assert all(p.shape == "poly" and p.points for p in drawing.pins)
-    # the label is drawn once (on the first shape only)
-    assert [p.label for p in drawing.pins] == ["E1", "", ""]
+    # the label is drawn on every shape, so each co-wired member is annotated
+    assert [p.label for p in drawing.pins] == ["E1", "E1", "E1"]
     # the drawing's bounds span all three polygons
     xmin, xmax, _, _ = drawing.bounds(margin=0.0)
     assert (xmin, xmax) == (0.0, 5.0)

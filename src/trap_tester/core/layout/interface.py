@@ -273,7 +273,11 @@ def slot_pins(
 
     Every shape carries the slot's identity (``connector`` / ``pin`` / ``channel``)
     and the same verdict, so they colour together and a click on any of them
-    resolves to the one net. The label is drawn on the first shape only.
+    resolves to the one net. The label is drawn on *every* shape, so a net drawn as
+    several pads — a co-wired ion-trap group is one net of N member polygons —
+    annotates each of its members, not just the first. Single-shape slots (every
+    built-in and single-electrode layout) are unaffected. The label level-of-detail
+    in the renderer still hides them when the view is too dense to read.
 
     When the slot has no explicit drawn label (custom layouts leave it blank) the
     per-interface ``ident`` (LGA pad / finger / electrode name) is used instead, so
@@ -282,12 +286,12 @@ def slot_pins(
     lbl = slot.display_label if label is None else label
     lbl = lbl or (slot.ident or "")
     marks: list[PinMark] = []
-    for i, sh in enumerate(slot.iter_shapes()):
+    for sh in slot.iter_shapes():
         marks.append(
             PinMark(
                 x=sh.x, y=sh.y, r=sh.r, shape=sh.shape,
                 connector=slot.connector, pin=slot.pin, status=status,
-                fill=fill, stroke=stroke, label=lbl if i == 0 else "",
+                fill=fill, stroke=stroke, label=lbl,
                 message=message, measured=measured, channel=slot.channel,
                 ident=slot.ident, rot=sh.rot, points=sh.points,
             )
