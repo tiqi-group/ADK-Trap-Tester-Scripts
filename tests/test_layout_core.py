@@ -1,6 +1,6 @@
 """Headless tests for the interface-layout engine (``core.layout``).
 
-Run with ``uv run pytest test/test_layout_core.py``. No hardware and no Qt —
+Run with ``uv run pytest tests/test_layout_core.py``. No hardware and no Qt —
 these check the DSUB-50 geometry, JSON round-trip, the findings->colour mapping
 and the alternate ``key_by`` (drawing the same findings on another interface).
 """

@@ -1,6 +1,6 @@
 """Headless regression tests for the analysis engine (``core.analysis``).
 
-Run with ``uv run pytest test/test_analysis_core.py``. No hardware needed —
+Run with ``uv run pytest tests/test_analysis_core.py``. No hardware needed —
 these feed crafted results frames through the per-measurement analyses and
 check the classification, the registry dispatch and the report rendering.
 """

@@ -2,7 +2,10 @@
 name = "trap-tester"
 version = "0.1.0"
 description = "GUI and scripts for the Modular Trap Tester analog frontend (Analog Discovery 2/3)."
-authors = [{ name = "Michael Marti", email = "micmarti@ethz.ch" }]
+authors = [
+    { name = "Michael Marti", email = "michael@zuriq.com" },
+    { name = "Michael Marti", email = "micmarti@ethz.ch" },
+]
 requires-python = ">=3.11"
 dependencies = [
     "numpy>=2.1,<3",
@@ -37,20 +40,20 @@ packages = ["src/trap_tester"]
 
 
 [tool.pytest.ini_options]
-# Only collect the refactored, hardware-free regression suites. The legacy
-# scripts in test/ (test_trap_tester.py, step_response.py) run hardware code at
-# import time and would hang a bare ``pytest`` run.
-testpaths = ["test"]
+# Only collect the refactored, hardware-free regression suites in ``tests/``.
+# The legacy hardware scripts live in ``scripts/hardware/`` (outside testpaths);
+# they run hardware code at import time and would hang a bare ``pytest`` run.
+testpaths = ["tests"]
 python_files = ["test_*_core.py"]
 
 
 [tool.pyright]
-include = ["src/trap_tester", "test"]
+include = ["src/trap_tester", "tests"]
 typeCheckingMode = "basic"
 
 
 [tool.ruff]
-target-version = "py310" # Always generate Python 3.10-compatible code
+target-version = "py311" # Matches requires-python (>=3.11)
 extend-exclude = [
   "docs", "tests"
 ]

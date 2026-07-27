@@ -32,20 +32,53 @@ The GUI runs without hardware attached — tick **Simulate (no hardware)** in th
 Measurement panel to drive the flow against a synthetic device. The reusable,
 GUI-agnostic measurement engine lives in `src/trap_tester/core/`.
 
+### Building a standalone executable
+
+The GUI can be frozen into a self-contained bundle with
+[PyInstaller](https://pyinstaller.org/) so it runs without a Python
+installation. The build is driven by the tracked `trap-tester.spec`:
+
+```bash
+uv sync --group packaging          # installs PyInstaller
+uv run pyinstaller trap-tester.spec
+```
+
+The result is `dist/trap-tester/` — a self-contained folder whose launcher is
+`dist/trap-tester/trap-tester` (`trap-tester.exe` on Windows). Zip the folder to
+distribute it.
+
+Notes:
+
+* **Build per OS.** PyInstaller does not cross-compile: run the command on each
+  target platform to produce that platform's binary (Linux binary on Linux,
+  `.app` on macOS, `.exe` on Windows).
+* **Hardware needs WaveForms.** Real Analog Discovery access still requires
+  Digilent's WaveForms runtime (`libdwf`) on the target machine — it is a
+  native, separately-licensed library and is intentionally *not* bundled.
+  Without it the app still launches and runs in **Simulate** mode.
+
 ## Repository Structure
 
-* **src/trap_tester**: contains the helper functions configure the Modular Trap Tester
-* **test**: Contains scripts to verify the Waveform SDK Install and to test the Modular Trap Tester hardware itself. Additionally, one can find SPICE sim files for a double RC low-pass filter. This has been used to verify the analytical model of the frontend.
-* **measurement**: contains the scripts which perform the measurements possible with Tester
-* **analysis**: contains scripts which read in the output of the measurement script and compiles reports for the user
+* **src/trap_tester**: the Python package. `core/` is the GUI-agnostic engine
+  (device abstraction + mock, measurements, analysis, self-test, interface
+  layouts) and `gui/` is the PySide6 application. The `trap-tester-gui` console
+  script lives here.
+* **tests**: hardware-free regression suites run by `pytest` (see [Tests](#tests)).
+* **scripts/hardware**: standalone scripts that require attached hardware — the
+  WaveForms SDK install check and the analog-frontend self-test — plus the SPICE
+  (LTspice) sim files for the double-RC low-pass model used to verify the
+  analytical model of the frontend. (The self-test and install check are also
+  available, hardware-free-friendly, from the GUI's Self-Test panel.)
+* **packaging**: the PyInstaller entry point used to build a standalone
+  executable (see [Building a standalone executable](#building-a-standalone-executable)).
 
 ## Tests
 
-### test-waveform-install.py
+### scripts/hardware/check-waveform-install.py
 
 This script only tries to load the WaveformSDK binaries. This should work on every platform (Mac, Windows, Linux).
 
-### test-trap-tester.py
+### scripts/hardware/test_trap_tester.py
 
 This script serves as self-test of the analog frontend. It covers all capabilities of the Trap Tester:
 
@@ -294,3 +327,11 @@ runtime loads the JSON, not the code:
 python -m trap_tester.core.layout.dsub50   # rewrites layouts/dsub50.json
 python -m trap_tester.core.layout.fpc      # rewrites layouts/fpc.json
 ```
+
+## Development
+
+Substantial portions of this project — notably the GUI, the refactor of the
+measurement/analysis/self-test scripts into a reusable engine, and the packaging
+setup — were developed with the assistance of
+[Claude Code](https://claude.com/claude-code) (Anthropic). See
+[`CHANGELOG.md`](CHANGELOG.md) for notable changes.

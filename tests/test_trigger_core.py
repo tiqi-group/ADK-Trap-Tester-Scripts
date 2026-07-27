@@ -1,6 +1,6 @@
 """Regression tests for the trigger controls + cancel/timeout/free-run behavior.
 
-Run with ``uv run pytest test/test_trigger_core.py``. The MockDevice grows a
+Run with ``uv run pytest tests/test_trigger_core.py``. The MockDevice grows a
 ``fail_trigger`` knob (its scope status stays RUNNING) so the no-trigger path —
 timeout, free-run debug frames, then skip (C=R=-1) — is exercised without
 hardware, and cancellation can be checked while the scope "waits for a trigger".

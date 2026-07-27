@@ -1,6 +1,6 @@
 """Headless regression tests for the refactored filter measurement.
 
-Run with ``uv run pytest test/test_filter_core.py``. These need no hardware —
+Run with ``uv run pytest tests/test_filter_core.py``. These need no hardware —
 they drive :func:`run_filter_measurement` against the :class:`MockDevice`.
 """
 

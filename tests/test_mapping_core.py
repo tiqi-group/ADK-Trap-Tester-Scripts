@@ -1,6 +1,6 @@
 """Headless tests for the cross-interface mapping engine (``core.layout.mapping``).
 
-Run with ``uv run pytest test/test_mapping_core.py``. No hardware and no Qt — these
+Run with ``uv run pytest tests/test_mapping_core.py``. No hardware and no Qt — these
 check CSV parsing (tolerant headers, net ids, blank cells), ``apply_to`` re-wiring
 of named vs reference layouts, the inherent-wiring fallback, and the cross-interface
 correlation that lets a mark on one interface re-project onto another.

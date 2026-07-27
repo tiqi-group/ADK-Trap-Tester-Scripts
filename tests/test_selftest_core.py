@@ -1,6 +1,6 @@
 """Headless regression tests for the self-test core (``core.selftest``).
 
-Run with ``uv run pytest test/test_selftest_core.py``. The frontend loopback is
+Run with ``uv run pytest tests/test_selftest_core.py``. The frontend loopback is
 driven against the :class:`MockDevice`, whose voltage-mode capture returns
 matched channels, so every pin correlates ~1.0.
 """
