@@ -46,9 +46,13 @@ def test_reset_restores_default(isolated_config):
 
 
 def test_user_expansion(isolated_config, monkeypatch):
-    monkeypatch.setenv("HOME", "/home/tester")
+    # Path.expanduser() reads HOME on POSIX but USERPROFILE on Windows, so both
+    # have to be redirected for this to be a platform-agnostic assertion.
+    home = isolated_config / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
     appconfig.set_results_dir("~/traptest")
-    assert appconfig.results_dir() == Path("/home/tester/traptest")
+    assert appconfig.results_dir() == home / "traptest"
 
 
 def test_survives_corrupt_config(isolated_config):
