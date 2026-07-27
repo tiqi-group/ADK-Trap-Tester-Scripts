@@ -7,3 +7,7 @@ RESUME.md
 
 results/*
 *.log
+
+# PyInstaller build artifacts (the spec file IS tracked)
+/build/
+/dist/
