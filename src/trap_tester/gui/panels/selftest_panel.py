@@ -39,6 +39,7 @@ from trap_tester.gui.panels.measurement_panel import _device_priority
 from trap_tester.gui.widgets.scope_canvas import ChannelSpec, ScopeCanvas
 from trap_tester.gui.widgets.settings_form import SettingsForm
 from trap_tester.gui.widgets.terminal_output import TerminalOutput
+from trap_tester.gui.widgets.waveforms_banner import WaveformsBanner
 from trap_tester.gui.worker import MeasurementWorker, QtGate, QtReporter
 
 _INSTALL = "install"
@@ -124,9 +125,12 @@ class SelfTestPanel(QWidget):
         controls.addWidget(self._run_btn, 1)
         controls.addWidget(self._stop_btn)
 
+        self._waveforms_banner = WaveformsBanner()
+
         self._device_box = QWidget()
         db = QVBoxLayout(self._device_box)
         db.setContentsMargins(0, 0, 0, 0)
+        db.addWidget(self._waveforms_banner)
         db.addLayout(dev_row)
 
         layout.addWidget(header)
@@ -173,6 +177,7 @@ class SelfTestPanel(QWidget):
 
     # ---- devices -----------------------------------------------------------
     def _populate_devices(self) -> None:
+        self._waveforms_banner.refresh()
         self._device_combo.clear()
         devices = sorted(enumerate_devices(force_mock=False), key=_device_priority)
         for dev in devices:

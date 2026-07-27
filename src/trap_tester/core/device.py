@@ -299,22 +299,48 @@ def _mock_device_list() -> list[dict[str, Any]]:
     ]
 
 
+def _enumerate_real() -> Any:
+    """Enumerate real devices via ``dwfpy``.
+
+    Raises if the ``dwfpy`` binding or the Digilent WaveForms runtime is
+    unavailable. Note that a missing ``libdwf`` does NOT fail at ``import
+    dwfpy`` — dwfpy stores the load error and re-raises it on the first library
+    call (here), so this call is what surfaces a missing runtime.
+    """
+    import dwfpy as dwf
+
+    return dwf.Device.enumerate()
+
+
+def waveforms_runtime_available() -> bool:
+    """Whether Digilent's WaveForms runtime (``libdwf``) can actually be used.
+
+    Distinguishes a *missing runtime* from *no device attached*: both make
+    :func:`enumerate_devices` return an empty list, but only a missing runtime
+    means hardware can never work until WaveForms is installed. Because dwfpy
+    defers a load failure to the first library call, a successful enumeration
+    (even of zero devices) proves the runtime is present.
+    """
+    try:
+        _enumerate_real()
+    except Exception:
+        return False
+    return True
+
+
 def enumerate_devices(force_mock: bool = False) -> list[dict[str, Any]]:
     """List attached Analog Discovery devices.
 
     Returns one dict per device with whatever identifying fields are readable
     (``name``, ``serial``, ``id``, ``revision``, ``type``). Returns a simulated
     list when ``force_mock`` is set; an empty list when the SDK is missing or no
-    device is attached.
+    device is attached (use :func:`waveforms_runtime_available` to tell those
+    two cases apart).
     """
     if force_mock:
         return _mock_device_list()
     try:
-        import dwfpy as dwf
-    except Exception:
-        return []
-    try:
-        devices = dwf.Device.enumerate()
+        devices = _enumerate_real()
     except Exception:
         return []
 

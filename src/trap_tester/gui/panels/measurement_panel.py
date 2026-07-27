@@ -53,6 +53,7 @@ from trap_tester.gui.widgets.scope_canvas import (
 )
 from trap_tester.gui.widgets.settings_form import SettingsForm
 from trap_tester.gui.widgets.terminal_output import TerminalOutput
+from trap_tester.gui.widgets.waveforms_banner import WaveformsBanner
 from trap_tester.gui.worker import MeasurementWorker, QtGate, QtReporter
 
 # The core module that implements each measurement (shown in the source viewer).
@@ -198,6 +199,9 @@ class MeasurementPanel(QWidget):
         col.setMinimumWidth(260)
         layout = QVBoxLayout(col)
 
+        self._waveforms_banner = WaveformsBanner()
+        layout.addWidget(self._waveforms_banner)
+
         self._settings_box = QGroupBox(f"Settings — {_DISPLAY_NAME['measure_filter']}")
         self._settings_box.setProperty("role", "interactive")
         self._settings_box_layout = QVBoxLayout(self._settings_box)
@@ -259,6 +263,7 @@ class MeasurementPanel(QWidget):
     # ---- devices -----------------------------------------------------------
     def _populate_devices(self) -> None:
         """Fill the device selector with attached devices + a simulated option."""
+        self._waveforms_banner.refresh()
         self._device_combo.clear()
         devices = sorted(enumerate_devices(force_mock=False), key=_device_priority)
         for dev in devices:

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from trap_tester.core.device import enumerate_devices
+from trap_tester.gui.widgets.waveforms_banner import WaveformsBanner
 
 # fields shown in the info viewer, in order: (dict key, label)
 _INFO_FIELDS = [
@@ -51,8 +52,11 @@ class DevicePanel(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([320, 720])
 
+        self._banner = WaveformsBanner()
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self._banner)
         layout.addWidget(splitter)
 
         self.refresh()
@@ -104,6 +108,7 @@ class DevicePanel(QWidget):
 
     # ---- data --------------------------------------------------------------
     def refresh(self) -> None:
+        self._banner.refresh()
         self._devices = enumerate_devices(force_mock=self._sim_checkbox.isChecked())
         self._list.clear()
         for dev in self._devices:
