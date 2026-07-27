@@ -9,6 +9,12 @@ name: Build Linux executable
 # (see "Building a standalone executable" in the README).
 
 on:
+  # TEMPORARY: builds on every push to the feature branch so the workflow can be
+  # exercised before it reaches the default branch (a `workflow_dispatch` run can
+  # only be started once the file is on the default branch). Remove this trigger
+  # once the build is proven and the workflow is merged.
+  push:
+    branches: [feature/trap-tester-gui]
   release:
     types: [published]
   workflow_dispatch:
