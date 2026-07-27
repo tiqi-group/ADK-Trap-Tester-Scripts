@@ -74,8 +74,11 @@ publishes an archive:
 | Linux x86_64 | `ubuntu-latest` | `trap-tester-<version>-linux-x86_64.tar.gz` |
 | Windows x86_64 | `windows-latest` | `trap-tester-<version>-windows-x86_64.zip` |
 | macOS Apple silicon | `macos-latest` | `trap-tester-<version>-macos-arm64.tar.gz` |
-| macOS Intel | `macos-13` | `trap-tester-<version>-macos-x86_64.tar.gz` |
+| macOS Intel | `macos-15-intel` | `trap-tester-<version>-macos-x86_64.tar.gz` |
 
+* **Intel macOS is on borrowed time.** GitHub retires x86_64 macOS runners when
+  the `macos-15` image goes (autumn 2027); after that the Intel row has to drop
+  out unless it moves to self-hosted hardware.
 * **On a published release** the archives are attached to that release, so the
   executables can be downloaded straight from the releases page.
 * **On a manual run** (*Actions → Build executables → Run workflow*) each

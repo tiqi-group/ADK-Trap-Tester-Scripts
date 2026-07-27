@@ -44,7 +44,10 @@ jobs:
             label: windows-x86_64
           - os: macos-latest
             label: macos-arm64 # Apple silicon
-          - os: macos-13
+          - os: macos-15-intel
+            # The last Intel image, `macos-13`, was retired on 2025-12-04; a
+            # retired label is not an error, the job just queues forever. GitHub
+            # drops x86_64 macOS entirely when macos-15 retires (autumn 2027).
             label: macos-x86_64 # Intel
     env:
       TAG: ${{ github.event.release.tag_name }}
