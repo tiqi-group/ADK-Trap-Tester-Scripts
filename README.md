@@ -79,11 +79,23 @@ publishes an archive:
 * **Intel macOS is on borrowed time.** GitHub retires x86_64 macOS runners when
   the `macos-15` image goes (autumn 2027); after that the Intel row has to drop
   out unless it moves to self-hosted hardware.
-* **On a published release** the archives are attached to that release, so the
-  executables can be downloaded straight from the releases page.
+* **To cut a release, push a tag** — the workflow is triggered by any tag
+  matching `v*`:
+
+  ```bash
+  git tag v0.2.0
+  git push origin v0.2.0
+  ```
+
+  Once all four platforms have built and passed their smoke test, the workflow
+  creates a GitHub release for that tag with auto-generated notes (the
+  commits/PRs since the previous tag) and attaches the four archives to it, so
+  the executables can be downloaded straight from the releases page. If any
+  platform fails, nothing is published — there is no half-finished release to
+  clean up. Re-running the workflow on a tag replaces the existing assets.
 * **On a manual run** (*Actions → Build executables → Run workflow*) each
   archive is uploaded as a workflow artifact on the run page, versioned
-  `dev-<sha>`.
+  `dev-<sha>`, and no release is created.
 
 To use one: download and extract the archive, then run the `trap-tester`
 launcher inside it (on macOS, open `trap-tester.app`). The macOS bundle is

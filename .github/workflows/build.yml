@@ -2,22 +2,20 @@ name: Build executables
 
 # Freezes the GUI with PyInstaller on every supported OS and publishes the
 # bundles:
-#   * on every run  -> as workflow artifacts (downloadable from the run page)
-#   * on a release  -> additionally attached to that release as assets
+#   * on every run   -> as workflow artifacts (downloadable from the run page)
+#   * on a `v*` tag  -> additionally as assets on a GitHub release for that tag,
+#                       created here with auto-generated notes
 #
 # PyInstaller does not cross-compile, so each bundle is built on a runner of
 # that OS *and* CPU architecture (see "Building a standalone executable" in the
 # README).
 
 on:
-  # TEMPORARY: builds on every push to the feature branch so the workflow can be
-  # exercised before it reaches the default branch (a `workflow_dispatch` run can
-  # only be started once the file is on the default branch). Remove this trigger
-  # once the build is proven and the workflow is merged.
+  # Release builds are tag-driven: `git tag v0.2.0 && git push origin v0.2.0`.
+  # There is deliberately no `release: [published]` trigger — creating a release
+  # in the web UI also pushes its tag, which would build the same commit twice.
   push:
-    branches: [feature/trap-tester-gui]
-  release:
-    types: [published]
+    tags: ["v*"]
   workflow_dispatch:
 
 permissions:
@@ -32,8 +30,6 @@ jobs:
     name: ${{ matrix.label }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 45 # a frozen GUI that pops an error dialog would hang forever
-    permissions:
-      contents: write # required to attach the archives to the release
     strategy:
       fail-fast: false # one OS failing must not hide the others' results
       matrix:
@@ -50,7 +46,8 @@ jobs:
             # drops x86_64 macOS entirely when macos-15 retires (autumn 2027).
             label: macos-x86_64 # Intel
     env:
-      TAG: ${{ github.event.release.tag_name }}
+      # Empty on a manual run, so the archives fall back to a `dev-<sha>` version.
+      TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
       LABEL: ${{ matrix.label }}
     steps:
       - uses: actions/checkout@v4
@@ -153,9 +150,34 @@ jobs:
           path: ${{ env.ARCHIVE }}
           if-no-files-found: error
 
-      - name: Attach to the release
-        if: github.event_name == 'release'
-        shell: bash
+  publish:
+    name: Publish release
+    # Only for tags; `needs` also means a partial matrix never gets published,
+    # since a failed build job keeps this one from running at all.
+    if: github.ref_type == 'tag'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # required to create the release and attach the archives
+    env:
+      TAG: ${{ github.ref_name }}
+    steps:
+      - name: Collect every platform's archive
+        uses: actions/download-artifact@v4
+        with:
+          path: archives
+          merge-multiple: true # one archive per job -> flatten them into one dir
+
+      - name: Create the release and attach the bundles
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh release upload "$TAG" "$ARCHIVE" --clobber
+        # --generate-notes lets GitHub write the notes from the commits/PRs since
+        # the previous tag. Re-running the workflow on an existing release
+        # replaces the assets rather than failing.
+        run: |
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" archives/* --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" archives/* --repo "$GITHUB_REPOSITORY" \
+              --title "$TAG" --generate-notes
+          fi

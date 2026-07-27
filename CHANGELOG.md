@@ -24,9 +24,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standalone executable build via PyInstaller (`trap-tester.spec` +
   `packaging/`); see the README.
 - GitHub Actions workflow that builds, smoke-tests and publishes bundles for
-  Linux x86_64, Windows x86_64 and macOS (Apple silicon and Intel) — attached
-  as assets to every published release, and available as workflow artifacts on
-  manual runs.
+  Linux x86_64, Windows x86_64 and macOS (Apple silicon and Intel). Pushing a
+  `v*` tag creates a release with auto-generated notes and attaches all four
+  archives to it; manual runs publish them as workflow artifacts instead.
 - macOS app bundle (`dist/trap-tester.app`) from the PyInstaller spec, so the
   GUI is double-clickable there. It is not code-signed or notarised; see the
   README for the Gatekeeper note.
