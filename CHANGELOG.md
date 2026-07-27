@@ -23,9 +23,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Light/dark theming with a live toggle in the Settings panel.
 - Standalone executable build via PyInstaller (`trap-tester.spec` +
   `packaging/`); see the README.
-- GitHub Actions workflow that builds, smoke-tests and publishes the Linux
-  x86_64 bundle — attached as an asset to every published release, and
-  available as a workflow artifact on manual runs.
+- GitHub Actions workflow that builds, smoke-tests and publishes bundles for
+  Linux x86_64, Windows x86_64 and macOS (Apple silicon and Intel) — attached
+  as assets to every published release, and available as workflow artifacts on
+  manual runs.
+- macOS app bundle (`dist/trap-tester.app`) from the PyInstaller spec, so the
+  GUI is double-clickable there. It is not code-signed or notarised; see the
+  README for the Gatekeeper note.
+- `--smoke-test` flag on the GUI launcher: builds every panel once and exits
+  with a status instead of entering the event loop, used to verify frozen
+  bundles in CI.
 - Banner that appears when the Digilent WaveForms runtime (`libdwf`) is not
   installed, distinguishing a missing runtime from an unplugged device and
   linking to the download page (a free Digilent account is required to

@@ -44,37 +44,52 @@ uv run pyinstaller trap-tester.spec
 ```
 
 The result is `dist/trap-tester/` — a self-contained folder whose launcher is
-`dist/trap-tester/trap-tester` (`trap-tester.exe` on Windows). Zip the folder to
-distribute it.
+`dist/trap-tester/trap-tester` (`trap-tester.exe` on Windows). On macOS the same
+collection is additionally wrapped into a double-clickable app bundle,
+`dist/trap-tester.app`, which is the artifact to ship there. Archive the folder
+(or the bundle) to distribute it.
 
 Notes:
 
-* **Build per OS.** PyInstaller does not cross-compile: run the command on each
-  target platform to produce that platform's binary (Linux binary on Linux,
-  `.app` on macOS, `.exe` on Windows).
+* **Build per OS *and* architecture.** PyInstaller does not cross-compile: run
+  the command on each target platform to produce that platform's binary, and on
+  the target CPU (an Apple-silicon build is not an Intel build).
 * **Hardware needs WaveForms.** Real Analog Discovery access still requires
   Digilent's WaveForms runtime (`libdwf`) on the target machine — it is a
   native, separately-licensed library and is intentionally *not* bundled.
   Without it the app still launches and runs in **Simulate** mode.
+* **Verifying a bundle.** The launcher accepts `--smoke-test`: it builds every
+  panel once and exits with a status instead of entering the event loop, which
+  is how CI checks a frozen build.
 
-#### Linux builds in CI
+#### Builds in CI
 
-The Linux bundle is built automatically by the
-[`Build Linux executable`](.github/workflows/build-linux.yml) GitHub Actions
-workflow, which runs the regression suite, freezes the app, smoke-tests the
-frozen launcher headlessly, and then publishes
-`trap-tester-<version>-linux-x86_64.tar.gz`:
+Bundles are built automatically by the [`Build executables`](.github/workflows/build.yml)
+GitHub Actions workflow, which — on a runner per platform — runs the regression
+suite, freezes the app, smoke-tests the frozen launcher headlessly, and
+publishes an archive:
 
-* **On a published release** the archive is attached to that release, so the
-  Linux executable can be downloaded straight from the releases page.
-* **On a manual run** (*Actions → Build Linux executable → Run workflow*) the
-  archive is uploaded as a workflow artifact on the run page, named
-  `trap-tester-dev-<sha>-linux-x86_64`.
+| Platform | Runner | Archive |
+| --- | --- | --- |
+| Linux x86_64 | `ubuntu-latest` | `trap-tester-<version>-linux-x86_64.tar.gz` |
+| Windows x86_64 | `windows-latest` | `trap-tester-<version>-windows-x86_64.zip` |
+| macOS Apple silicon | `macos-latest` | `trap-tester-<version>-macos-arm64.tar.gz` |
+| macOS Intel | `macos-13` | `trap-tester-<version>-macos-x86_64.tar.gz` |
 
-To use it: download and extract the archive, then run the `trap-tester`
-launcher inside the extracted folder. macOS and Windows bundles are not built
-in CI (no cross-compilation) and still have to be produced on those systems
-with the command above.
+* **On a published release** the archives are attached to that release, so the
+  executables can be downloaded straight from the releases page.
+* **On a manual run** (*Actions → Build executables → Run workflow*) each
+  archive is uploaded as a workflow artifact on the run page, versioned
+  `dev-<sha>`.
+
+To use one: download and extract the archive, then run the `trap-tester`
+launcher inside it (on macOS, open `trap-tester.app`). The macOS bundle is
+**not code-signed or notarised**, so Gatekeeper quarantines a downloaded copy —
+clear it once with:
+
+```bash
+xattr -dr com.apple.quarantine trap-tester.app
+```
 
 ## Repository Structure
 

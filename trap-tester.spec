@@ -7,10 +7,13 @@ Build (onedir) with the packaging deps installed::
     uv run pyinstaller trap-tester.spec
 
 Output: ``dist/trap-tester/`` (a self-contained folder; the launcher is
-``dist/trap-tester/trap-tester``).  Zip that folder to distribute.
+``dist/trap-tester/trap-tester``, ``trap-tester.exe`` on Windows).  Archive that
+folder to distribute.  On macOS an app bundle ``dist/trap-tester.app`` is built
+from the same collection as well — that is the artifact to ship there.
 
 PyInstaller does NOT cross-compile: run this on each target OS to get that
-OS's binary (Linux here, macOS -> .app, Windows -> .exe).
+OS's binary, and on the target CPU architecture (an Apple-silicon build is not
+an Intel build).
 
 Note on hardware: real Analog Discovery access needs Digilent's WaveForms
 runtime (``libdwf``) installed on the target machine — it is a native,
@@ -18,12 +21,17 @@ separately-licensed library that is intentionally NOT bundled.  Without it the
 app still launches and runs in Simulate (mock) mode.
 """
 
+import sys
+import tomllib
 from pathlib import Path
 
 # ``__file__`` is not defined while PyInstaller execs a spec; the CWD is the
 # spec's directory (where pyinstaller was invoked with this spec).
 ROOT = Path.cwd()
 SRC = ROOT / "src"
+
+# Single source of truth for the version shown in the macOS bundle's Info.plist.
+VERSION = tomllib.loads((ROOT / "pyproject.toml").read_text())["project"]["version"]
 
 # Data files loaded at runtime via ``Path(__file__).with_name(...)``. They must
 # land at the same package-relative path inside the bundle so those lookups
@@ -114,3 +122,17 @@ coll = COLLECT(
     upx_exclude=[],
     name="trap-tester",
 )
+
+# macOS: wrap the collected folder in a double-clickable .app.  BUNDLE is a
+# no-op on other platforms, but guard it anyway so the Linux/Windows builds are
+# unmistakably unaffected.  The bundle is NOT code-signed or notarised, so a
+# downloaded copy is quarantined by Gatekeeper until the user clears it with
+# ``xattr -dr com.apple.quarantine trap-tester.app``.
+if sys.platform == "darwin":
+    app = BUNDLE(  # noqa: F821  (injected into the spec namespace by PyInstaller)
+        coll,
+        name="trap-tester.app",
+        icon=None,
+        bundle_identifier="ch.ethz.tiqi.trap-tester",
+        version=VERSION,
+    )

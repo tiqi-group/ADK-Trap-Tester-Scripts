@@ -1,0 +1,158 @@
+name: Build executables
+
+# Freezes the GUI with PyInstaller on every supported OS and publishes the
+# bundles:
+#   * on every run  -> as workflow artifacts (downloadable from the run page)
+#   * on a release  -> additionally attached to that release as assets
+#
+# PyInstaller does not cross-compile, so each bundle is built on a runner of
+# that OS *and* CPU architecture (see "Building a standalone executable" in the
+# README).
+
+on:
+  # TEMPORARY: builds on every push to the feature branch so the workflow can be
+  # exercised before it reaches the default branch (a `workflow_dispatch` run can
+  # only be started once the file is on the default branch). Remove this trigger
+  # once the build is proven and the workflow is merged.
+  push:
+    branches: [feature/trap-tester-gui]
+  release:
+    types: [published]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45 # a frozen GUI that pops an error dialog would hang forever
+    permissions:
+      contents: write # required to attach the archives to the release
+    strategy:
+      fail-fast: false # one OS failing must not hide the others' results
+      matrix:
+        include:
+          - os: ubuntu-latest
+            label: linux-x86_64
+          - os: windows-latest
+            label: windows-x86_64
+          - os: macos-latest
+            label: macos-arm64 # Apple silicon
+          - os: macos-13
+            label: macos-x86_64 # Intel
+    env:
+      TAG: ${{ github.event.release.tag_name }}
+      LABEL: ${{ matrix.label }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Qt runtime libraries
+        if: runner.os == 'Linux'
+        # PySide6 dlopen()s these; without them the offscreen smoke test below
+        # cannot load the Qt platform plugin. macOS/Windows runners ship theirs.
+        # libdwf (WaveForms) is deliberately absent everywhere — the app must
+        # still start and show its "runtime missing" banner.
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            libegl1 libgl1 libdbus-1-3 libxkbcommon0 libxkbcommon-x11-0 \
+            libxcb-cursor0 libxcb-icccm4 libxcb-image0 libxcb-keysyms1 \
+            libxcb-randr0 libxcb-render-util0 libxcb-shape0 libxcb-xinerama0
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: uv sync --frozen --group packaging
+
+      - name: Run the regression suite
+        run: uv run pytest -q
+
+      - name: Build the bundle
+        run: uv run pyinstaller --noconfirm trap-tester.spec
+
+      - name: Smoke-test the bundle (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+        # --smoke-test builds every panel and exits with a status instead of
+        # entering the event loop, so a broken bundle fails here rather than
+        # sitting in a timeout.
+        run: |
+          if [ "$RUNNER_OS" = macOS ]; then
+            launcher=./dist/trap-tester.app/Contents/MacOS/trap-tester
+          else
+            launcher=./dist/trap-tester/trap-tester
+          fi
+          "$launcher" --smoke-test
+
+      - name: Smoke-test the bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        # A windowed .exe detaches from the console, so call it through
+        # Start-Process to actually wait for it and capture its output.
+        run: |
+          $p = Start-Process -FilePath .\dist\trap-tester\trap-tester.exe `
+                             -ArgumentList '--smoke-test' -Wait -PassThru `
+                             -RedirectStandardOutput smoke.out `
+                             -RedirectStandardError smoke.err
+          Get-Content smoke.out, smoke.err -ErrorAction SilentlyContinue
+          if ($p.ExitCode -ne 0) {
+            Write-Output "::error::the frozen launcher exited with status $($p.ExitCode)"
+            exit 1
+          }
+
+      - name: Package the bundle (Linux/macOS)
+        if: runner.os != 'Windows'
+        shell: bash
+        # tar, not zip: it preserves the executable bit and the symlinks inside
+        # macOS frameworks (and upload-artifact re-zips whatever it is given).
+        run: |
+          version="${TAG:-dev-$(git rev-parse --short HEAD)}"
+          name="trap-tester-${version}-${LABEL}"
+          if [ "$RUNNER_OS" = macOS ]; then
+            tar -czf "${name}.tar.gz" -C dist trap-tester.app
+          else
+            mv dist/trap-tester "dist/${name}"
+            tar -czf "${name}.tar.gz" -C dist "${name}"
+          fi
+          echo "ARCHIVE=${name}.tar.gz" >> "$GITHUB_ENV"
+          echo "ARCHIVE_NAME=${name}" >> "$GITHUB_ENV"
+
+      - name: Package the bundle (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        # bsdtar (tar.exe) writes the zip far faster than Compress-Archive.
+        run: |
+          $version = if ($env:TAG) { $env:TAG } else { "dev-$(git rev-parse --short HEAD)" }
+          $name = "trap-tester-$version-$env:LABEL"
+          Rename-Item dist\trap-tester $name
+          tar.exe -a -c -f "$name.zip" -C dist $name
+          "ARCHIVE=$name.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "ARCHIVE_NAME=$name" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload as a workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME }}
+          path: ${{ env.ARCHIVE }}
+          if-no-files-found: error
+
+      - name: Attach to the release
+        if: github.event_name == 'release'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" "$ARCHIVE" --clobber
