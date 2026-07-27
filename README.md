@@ -57,6 +57,25 @@ Notes:
   native, separately-licensed library and is intentionally *not* bundled.
   Without it the app still launches and runs in **Simulate** mode.
 
+#### Linux builds in CI
+
+The Linux bundle is built automatically by the
+[`Build Linux executable`](.github/workflows/build-linux.yml) GitHub Actions
+workflow, which runs the regression suite, freezes the app, smoke-tests the
+frozen launcher headlessly, and then publishes
+`trap-tester-<version>-linux-x86_64.tar.gz`:
+
+* **On a published release** the archive is attached to that release, so the
+  Linux executable can be downloaded straight from the releases page.
+* **On a manual run** (*Actions → Build Linux executable → Run workflow*) the
+  archive is uploaded as a workflow artifact on the run page, named
+  `trap-tester-dev-<sha>-linux-x86_64`.
+
+To use it: download and extract the archive, then run the `trap-tester`
+launcher inside the extracted folder. macOS and Windows bundles are not built
+in CI (no cross-compilation) and still have to be produced on those systems
+with the command above.
+
 ## Repository Structure
 
 * **src/trap_tester**: the Python package. `core/` is the GUI-agnostic engine

@@ -23,6 +23,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Light/dark theming with a live toggle in the Settings panel.
 - Standalone executable build via PyInstaller (`trap-tester.spec` +
   `packaging/`); see the README.
+- GitHub Actions workflow that builds, smoke-tests and publishes the Linux
+  x86_64 bundle — attached as an asset to every published release, and
+  available as a workflow artifact on manual runs.
 - Banner that appears when the Digilent WaveForms runtime (`libdwf`) is not
   installed, distinguishing a missing runtime from an unplugged device and
   linking to the download page (a free Digilent account is required to
