@@ -10,13 +10,19 @@ Right — the interactive annotation view (red): a bare interface sketch whose
 Marks are keyed by canonical channel, so switching the interface (or connector)
 re-projects the same marks — the tool for correlating an operator-reported fault
 along the mechanical interfaces. The set round-trips to JSON via Save / Load.
+
+**Split view** shows two interfaces side by side instead of switching between them.
+Both views share one :class:`AnnotationSet`, so a mark made on either appears
+immediately on the other — the correlation is visible without switching. Each side
+picks its own interface (and connector, for the built-ins); the mapping and the
+annotation set are shared, since they describe the setup rather than one view.
 """
 
 from __future__ import annotations
 
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -58,6 +64,90 @@ _BUILTINS = [
 ]
 
 
+class _InterfaceSource(QWidget):
+    """One side's interface choice: layout selector + connector + "Show all".
+
+    The panel owns one of these per view, so the two sides of the split view are
+    picked independently. Emits :data:`changed` whenever any of the three changes.
+    """
+
+    changed = Signal()
+
+    def __init__(self, buttons: list[QWidget] | None = None) -> None:
+        super().__init__()
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        row = QHBoxLayout()
+        self.selector = QComboBox()
+        self.selector.setProperty("role", "interactive")
+        self.selector.currentIndexChanged.connect(self.changed)
+        row.addWidget(self.selector, 1)
+        for btn in buttons or []:
+            row.addWidget(btn)
+        v.addLayout(row)
+
+        conn_row = QHBoxLayout()
+        conn_row.addWidget(QLabel("Connector:"))
+        self.conn_spin = QSpinBox()
+        self.conn_spin.setProperty("role", "interactive")
+        self.conn_spin.setRange(0, TESTER_CONNECTORS - 1)  # 0-indexed; bounded
+        self.conn_spin.valueChanged.connect(self.changed)
+        conn_row.addWidget(self.conn_spin)
+        conn_row.addStretch(1)
+        self.show_all = QCheckBox("Show all")
+        self.show_all.setProperty("role", "interactive")
+        self.show_all.setToolTip(
+            "Render every connector instance at once (zoom / pan to inspect).\n"
+            "Connectors come from the mapping when one is loaded, else a default set."
+        )
+        self.show_all.toggled.connect(self.changed)
+        conn_row.addWidget(self.show_all)
+        v.addLayout(conn_row)
+
+    # ---- state -------------------------------------------------------------
+    def token(self):
+        return self.selector.currentData()
+
+    def name(self) -> str:
+        return self.selector.currentText()
+
+    def is_builtin(self) -> bool:
+        token = self.token()
+        return isinstance(token, str) and token.startswith("builtin:")
+
+    def refresh_options(self) -> None:
+        """Rebuild the selector from the search folders, keeping the choice."""
+        keep = self.selector.currentData()
+        self.selector.blockSignals(True)
+        self.selector.clear()
+        for label, token in _BUILTINS:
+            self.selector.addItem(label, token)
+        for name, path in user_layout_options():
+            self.selector.addItem(name, path)
+        idx = self.selector.findData(keep) if keep is not None else 0
+        self.selector.setCurrentIndex(idx if idx >= 0 else 0)
+        self.selector.blockSignals(False)
+
+    def select(self, data) -> bool:
+        idx = self.selector.findData(data)
+        if idx < 0:
+            return False
+        self.selector.setCurrentIndex(idx)  # emits changed
+        return True
+
+    def select_default(self) -> None:
+        self.selector.setCurrentIndex(0)
+
+    def sync_enabled(self, conn_max: int) -> None:
+        """Grey out the connector controls where they do not apply."""
+        builtin = self.is_builtin()
+        self.show_all.setEnabled(builtin)
+        # single-connector picker is moot for custom layouts and when showing all
+        self.conn_spin.setEnabled(builtin and not self.show_all.isChecked())
+        self.conn_spin.setMaximum(conn_max)
+
+
 class InterfacesPanel(QWidget):
     def __init__(self) -> None:
         super().__init__()
@@ -71,6 +161,9 @@ class InterfacesPanel(QWidget):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([320, 900])
         outer.addWidget(splitter)
+
+        # both views annotate ONE set, so a mark on either shows up on the other
+        self._view_b.set_annotations(self._view_a.annotations())
 
         self._refresh_interfaces()
         self._refresh_mappings()
@@ -98,44 +191,38 @@ class InterfacesPanel(QWidget):
         sel_box.setProperty("role", "interactive")
         sel_v = QVBoxLayout(sel_box)
 
-        iface_row = QHBoxLayout()
-        self._iface_selector = QComboBox()
-        self._iface_selector.setProperty("role", "interactive")
-        self._iface_selector.currentIndexChanged.connect(self._update_view)
-        iface_row.addWidget(self._iface_selector, 1)
         self._import_btn = QPushButton("Import…")
         self._import_btn.setProperty("role", "interactive")
         self._import_btn.setToolTip(
             f"Import a custom interface layout JSON into {user_layouts_dir()}"
         )
         self._import_btn.clicked.connect(self._import_layout)
-        iface_row.addWidget(self._import_btn)
         self._folders_btn = QPushButton("Folders…")
         self._folders_btn.setProperty("role", "interactive")
         self._folders_btn.setToolTip(
             "Add folders to search for custom layouts (e.g. a private git repo)"
         )
         self._folders_btn.clicked.connect(self._manage_folders)
-        iface_row.addWidget(self._folders_btn)
-        sel_v.addLayout(iface_row)
 
-        conn_row = QHBoxLayout()
-        conn_row.addWidget(QLabel("Connector:"))
-        self._conn_spin = QSpinBox()
-        self._conn_spin.setProperty("role", "interactive")
-        self._conn_spin.setRange(0, TESTER_CONNECTORS - 1)  # 0-indexed; bounded
-        self._conn_spin.valueChanged.connect(self._update_view)
-        conn_row.addWidget(self._conn_spin)
-        conn_row.addStretch(1)
-        self._show_all = QCheckBox("Show all")
-        self._show_all.setProperty("role", "interactive")
-        self._show_all.setToolTip(
-            "Render every connector instance at once (zoom / pan to inspect).\n"
-            "Connectors come from the mapping when one is loaded, else a default set."
+        # Import / Folders are global actions, so they live on the first side only.
+        self._src_a = _InterfaceSource([self._import_btn, self._folders_btn])
+        self._src_a.changed.connect(self._update_view)
+        sel_v.addWidget(self._src_a)
+
+        self._split = QCheckBox("Split view (two interfaces side by side)")
+        self._split.setProperty("role", "interactive")
+        self._split.setToolTip(
+            "Show a second interface next to the first. Both share the same marks,\n"
+            "so a channel marked on one appears immediately on the other."
         )
-        self._show_all.toggled.connect(self._update_view)
-        conn_row.addWidget(self._show_all)
-        sel_v.addLayout(conn_row)
+        self._split.toggled.connect(self._on_split_toggled)
+        sel_v.addWidget(self._split)
+
+        self._second_label = QLabel("Second interface:")
+        sel_v.addWidget(self._second_label)
+        self._src_b = _InterfaceSource()
+        self._src_b.changed.connect(self._update_view)
+        sel_v.addWidget(self._src_b)
 
         map_row = QHBoxLayout()
         map_row.addWidget(QLabel("Mapping:"))
@@ -164,7 +251,12 @@ class InterfacesPanel(QWidget):
         )
         hint.setWordWrap(True)
         sel_v.addWidget(hint)
+        self._set_second_visible(False)
         return sel_box
+
+    def _set_second_visible(self, visible: bool) -> None:
+        self._second_label.setVisible(visible)
+        self._src_b.setVisible(visible)
 
     def _build_annotations_box(self) -> QWidget:
         marks_box = QGroupBox("Annotations")
@@ -204,23 +296,34 @@ class InterfacesPanel(QWidget):
         top.addWidget(self._save_view_btn)
         v.addLayout(top)
 
-        self._view = AnnotationView()
-        self._view.changed.connect(self._update_summary)
-        v.addWidget(self._view)
+        self._view_a = AnnotationView()
+        self._view_b = AnnotationView()
+        # A click mutates the shared set; repaint the other side (refresh() is
+        # signal-free, so the two views cannot re-trigger each other).
+        self._view_a.changed.connect(self._on_marks_changed)
+        self._view_b.changed.connect(self._on_marks_changed)
+
+        # a splitter so the divider can be dragged when the two differ in shape
+        self._views = QSplitter(Qt.Horizontal)
+        self._views.addWidget(self._view_a)
+        self._views.addWidget(self._view_b)
+        self._views.setStretchFactor(0, 1)
+        self._views.setStretchFactor(1, 1)
+        self._view_b.setVisible(False)
+        v.addWidget(self._views)
         return box
+
+    def _on_marks_changed(self) -> None:
+        sender = self.sender()
+        other = self._view_b if sender is self._view_a else self._view_a
+        if other.isVisibleTo(self):
+            other.refresh()
+        self._update_summary()
 
     # ---- interface selection -----------------------------------------------
     def _refresh_interfaces(self) -> None:
-        keep = self._iface_selector.currentData()
-        self._iface_selector.blockSignals(True)
-        self._iface_selector.clear()
-        for label, token in _BUILTINS:
-            self._iface_selector.addItem(label, token)
-        for name, path in user_layout_options():
-            self._iface_selector.addItem(name, path)
-        idx = self._iface_selector.findData(keep) if keep is not None else 0
-        self._iface_selector.setCurrentIndex(idx if idx >= 0 else 0)
-        self._iface_selector.blockSignals(False)
+        for src in (self._src_a, self._src_b):
+            src.refresh_options()
 
     def _connector_set(self, mapping: Mapping | None) -> list[int]:
         """Which connectors "Show all" renders.
@@ -234,19 +337,21 @@ class InterfacesPanel(QWidget):
             return conns or [0]
         return list(range(TESTER_CONNECTORS))
 
-    def _current_layout(self, mapping: Mapping | None):
-        token = self._iface_selector.currentData()
-        if isinstance(token, str) and token.startswith("builtin:"):
+    def _current_layout(
+        self, src: _InterfaceSource, mapping: Mapping | None, view: AnnotationView
+    ):
+        token = src.token()
+        if src.is_builtin():
             is_dsub = token == "builtin:dsub50"
             factory = dsub50_layout_for_connector if is_dsub else fpc_layout_for_connector
-            if self._show_all.isChecked():
+            if src.show_all.isChecked():
                 conns = self._connector_set(mapping)
                 label = ("DSUB-50" if is_dsub else "FPC ribbon") + " — all connectors"
                 base = tile_connector_layouts(
                     [factory(c) for c in conns], conns, label
                 )
             else:
-                base = factory(self._conn_spin.value())
+                base = factory(src.conn_spin.value())
         else:
             try:
                 # Custom layouts are shown whole — they may span several connectors
@@ -258,19 +363,19 @@ class InterfacesPanel(QWidget):
                     f"Could not load '{Path(token).name}':\n{exc}\n\n"
                     "Falling back to the built-in DSUB-50.",
                 )
-                self._iface_selector.setCurrentIndex(0)
-                base = dsub50_layout_for_connector(self._conn_spin.value())
+                src.select_default()
+                base = dsub50_layout_for_connector(src.conn_spin.value())
         if mapping is None:
-            self._view.set_warning(None)
+            view.set_warning(None)
             return base
         if coverage(base, mapping) == 0:
             name = self._mapping_selector.currentText()
-            self._view.set_warning(
+            view.set_warning(
                 f"Mapping '{name}' does not apply to '{base.name}' — marks here "
                 "cannot propagate to or from other interfaces via this mapping."
             )
         else:
-            self._view.set_warning(None)
+            view.set_warning(None)
         return apply_to(base, mapping)
 
     def _refresh_mappings(self) -> None:
@@ -305,22 +410,31 @@ class InterfacesPanel(QWidget):
                 return None
         return self._mapping_cache[token]
 
+    def _on_split_toggled(self, on: bool) -> None:
+        self._set_second_visible(on)
+        self._view_b.setVisible(on)
+        if on and self._views.sizes()[1] == 0:
+            half = max(self._views.width() // 2, 1)
+            self._views.setSizes([half, half])
+        self._update_view()
+
     def _update_view(self) -> None:
-        token = self._iface_selector.currentData()
-        # The connector picker only applies to the single-connector built-ins;
-        # custom layouts carry their own connectors and are drawn whole.
-        is_builtin = isinstance(token, str) and token.startswith("builtin:")
         mapping = self._selected_mapping()
-        show_all = self._show_all.isChecked()
-        self._show_all.setEnabled(is_builtin)
-        # single-connector picker is moot for custom layouts and when showing all
-        self._conn_spin.setEnabled(is_builtin and not show_all)
-        # bound the picker: a mapping defines the connector set, else a default
-        if mapping is not None:
-            self._conn_spin.setMaximum(max((n.connector for n in mapping.nets), default=0))
-        else:
-            self._conn_spin.setMaximum(TESTER_CONNECTORS - 1)
-        self._view.set_layout(self._current_layout(mapping))
+        # bound the connector pickers: a mapping defines the set, else a default
+        conn_max = (
+            max((n.connector for n in mapping.nets), default=0)
+            if mapping is not None
+            else TESTER_CONNECTORS - 1
+        )
+        split = self._split.isChecked()
+        for src, view, active in (
+            (self._src_a, self._view_a, True),
+            (self._src_b, self._view_b, split),
+        ):
+            if not active:
+                continue  # don't pay to render a hidden side
+            src.sync_enabled(conn_max)
+            view.set_layout(self._current_layout(src, mapping, view))
         self._update_summary()
 
     def _import_layout(self) -> None:
@@ -338,9 +452,9 @@ class InterfacesPanel(QWidget):
             )
             return
         self._refresh_interfaces()
-        idx = self._iface_selector.findData(str(dest))
-        if idx >= 0:
-            self._iface_selector.setCurrentIndex(idx)  # triggers _update_view
+        # show the freshly imported layout on the first side
+        if not self._src_a.select(str(dest)):
+            self._update_view()
 
     def _import_mapping(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -373,7 +487,7 @@ class InterfacesPanel(QWidget):
 
     # ---- annotation set: save / load / clear -------------------------------
     def _save(self) -> None:
-        annset = self._view.annotations()
+        annset = self._view_a.annotations()
         if annset.is_empty():
             QMessageBox.information(self, "Nothing to save", "No channels are marked.")
             return
@@ -403,24 +517,39 @@ class InterfacesPanel(QWidget):
                 f"'{Path(path).name}' is not a valid annotations file:\n{exc}",
             )
             return
-        self._view.set_annotations(annset)
+        # both views must go on sharing ONE set, so hand the same object to each
+        self._view_a.set_annotations(annset)
+        self._view_b.set_annotations(annset)
         self._update_summary()
 
     def _clear_all(self) -> None:
-        if self._view.annotations().is_empty():
+        if self._view_a.annotations().is_empty():
             return
         if QMessageBox.question(
             self, "Clear all", "Remove every mark? This cannot be undone."
         ) == QMessageBox.Yes:
-            self._view.clear_annotations()
+            self._view_a.clear_annotations()  # shared set; _on_marks_changed syncs B
+
+    @staticmethod
+    def _view_stem(src: _InterfaceSource) -> str:
+        name = src.name() or "interface"
+        stem = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
+        if src.is_builtin():
+            stem += (
+                "-all" if src.show_all.isChecked() else f"-conn{src.conn_spin.value()}"
+            )
+        return stem
 
     def _save_view(self) -> None:
-        """Export the interface visualiser exactly as shown to a PNG image."""
-        name = self._iface_selector.currentText() or "interface"
-        default = "".join(c if c.isalnum() or c in "-_" else "_" for c in name)
-        token = self._iface_selector.currentData()
-        if isinstance(token, str) and token.startswith("builtin:"):
-            default += "-all" if self._show_all.isChecked() else f"-conn{self._conn_spin.value()}"
+        """Export the interface visualiser exactly as shown to a PNG image.
+
+        In split view both panes are captured together, since "as shown" is the
+        side-by-side comparison the operator is looking at.
+        """
+        split = self._split.isChecked()
+        default = self._view_stem(self._src_a)
+        if split:
+            default += f"--{self._view_stem(self._src_b)}"
         path, _ = QFileDialog.getSaveFileName(
             self, "Save view", f"{default}.png", "PNG image (*.png)"
         )
@@ -429,14 +558,20 @@ class InterfacesPanel(QWidget):
         if not path.lower().endswith(".png"):
             path += ".png"
         try:
-            self._view.save_view(path)
+            if split:
+                self._view_a.canvas.draw()
+                self._view_b.canvas.draw()
+                if not self._views.grab().save(path):
+                    raise OSError(f"could not write image to {path}")
+            else:
+                self._view_a.save_view(path)
         except Exception as exc:  # noqa: BLE001 — surface any render/IO failure
             QMessageBox.warning(self, "Save failed", f"Could not save image:\n{exc}")
             return
         self._summary.setText(self._summary.text() + f"\nView saved to {Path(path).name}.")
 
     def _update_summary(self) -> None:
-        counts = self._view.annotations().counts()
+        counts = self._view_a.annotations().counts()  # shared with view B
         total = sum(counts.values())
         if not total:
             self._summary.setText("No channels marked.")

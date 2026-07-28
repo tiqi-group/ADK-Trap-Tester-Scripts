@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Custom interface layouts (DSUB-50, FPC, interposer, bond-finger) with a
   cross-interface channel-mapping model, zoom/pan, and import/search-folder
   support.
+- **Split view** toggle in the Interfaces panel: show two interfaces side by side
+  in a draggable splitter, each with its own interface and connector selection.
+  Both share one annotation set, so a channel marked on either appears
+  immediately on the other — the cross-interface correlation is visible without
+  switching. "Save view…" captures both panes when split.
 - Light/dark theming with a live toggle in the Settings panel.
 - Standalone executable build via PyInstaller (`trap-tester.spec` +
   `packaging/`); see the README.

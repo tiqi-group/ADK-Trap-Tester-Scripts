@@ -56,6 +56,15 @@ class AnnotationView(LayoutCanvas):
     def annotations(self) -> AnnotationSet:
         return self._annset
 
+    def refresh(self) -> None:
+        """Repaint from the current set without emitting :data:`changed`.
+
+        Two views can share one :class:`AnnotationSet` (see the Interfaces panel's
+        split view); when a click mutates it in one view, the other is refreshed
+        with this. It must stay signal-free so the two do not re-trigger each other.
+        """
+        self._redraw()
+
     def clear_annotations(self) -> None:
         self._annset.clear_all()
         self._redraw()
