@@ -40,7 +40,9 @@ from trap_tester.core.appconfig import (
     results_dir,
     set_results_dir,
     set_theme,
+    set_ui_scale,
     theme,
+    ui_scale,
 )
 from trap_tester.core.layout import (
     add_layout_dir,
@@ -58,6 +60,9 @@ class SettingsPanel(QWidget):
     themeChanged = Signal(str)  # UI theme changed (apply light/dark live)
 
     _THEME_LABELS = [("Light", "light"), ("Dark", "dark")]
+    # Offered steps. appconfig clamps to its own bounds, so a hand-edited config can
+    # sit between these without being silently reset.
+    _UI_SCALES = (1.0, 1.25, 1.5, 1.75, 2.0, 2.5)
 
     def __init__(self) -> None:
         super().__init__()
@@ -157,11 +162,46 @@ class SettingsPanel(QWidget):
         self._theme_combo.currentIndexChanged.connect(self._on_theme_changed)
         row.addWidget(self._theme_combo, 1)
         v.addLayout(row)
+
+        scale_row = QHBoxLayout()
+        scale_row.addWidget(QLabel("UI scale:"))
+        self._scale_combo = QComboBox()
+        self._scale_combo.setProperty("role", "interactive")
+        self._scale_combo.setToolTip(
+            "Enlarge the whole interface on a high-DPI screen.\n"
+            "100% follows the desktop's own scaling; raise it if text and controls\n"
+            "are too small. Applies when the app is restarted."
+        )
+        for factor in self._UI_SCALES:
+            self._scale_combo.addItem(f"{round(factor * 100)}%", factor)
+        idx = self._scale_combo.findData(ui_scale())
+        if idx < 0:  # a hand-edited config may hold a value that is not a step
+            self._scale_combo.addItem(f"{round(ui_scale() * 100)}%", ui_scale())
+            idx = self._scale_combo.count() - 1
+        self._scale_combo.setCurrentIndex(idx)
+        self._scale_combo.currentIndexChanged.connect(self._on_scale_changed)
+        scale_row.addWidget(self._scale_combo, 1)
+        v.addLayout(scale_row)
+
+        # Qt fixes its scale factor when the QApplication is built, so unlike the
+        # theme this cannot be applied live.
+        self._scale_note = QLabel("")
+        self._scale_note.setProperty("role", "viewer")
+        self._scale_note.setWordWrap(True)
+        self._scale_note.setVisible(False)
+        v.addWidget(self._scale_note)
         return box
 
     def _on_theme_changed(self, _index: int) -> None:
         name = set_theme(self._theme_combo.currentData())
         self.themeChanged.emit(name)
+
+    def _on_scale_changed(self, _index: int) -> None:
+        factor = set_ui_scale(self._scale_combo.currentData())
+        self._scale_note.setText(
+            f"UI scale set to {round(factor * 100)}% — restart the app to apply it."
+        )
+        self._scale_note.setVisible(True)
 
     # ---- custom layout / mapping folders -----------------------------------
     def _build_layouts_box(self) -> QWidget:

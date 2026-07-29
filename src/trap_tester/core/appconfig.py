@@ -27,6 +27,11 @@ _DEFAULT_RESULTS = "results"
 _THEME_KEY = "theme"
 _DEFAULT_THEME = "light"
 _THEMES = ("light", "dark")
+_UI_SCALE_KEY = "ui_scale"
+_DEFAULT_UI_SCALE = 1.0
+# Bounds, not a fixed list: the Settings tab offers steps but a hand-edited config
+# may ask for anything, and a factor of 0 or 12 would make the app unusable.
+UI_SCALE_MIN, UI_SCALE_MAX = 0.5, 4.0
 
 
 def config_path() -> Path:
@@ -92,12 +97,47 @@ def set_theme(name: str) -> str:
     return data[_THEME_KEY]
 
 
+def ui_scale() -> float:
+    """The configured UI scale factor (1.0 = the platform's own scaling).
+
+    Read *before* the ``QApplication`` exists — Qt fixes its scale factor at
+    construction — so this must stay Qt-free. See
+    :func:`trap_tester.gui.__main__.main`.
+    """
+    try:
+        value = float(_load().get(_UI_SCALE_KEY, _DEFAULT_UI_SCALE))
+    except (TypeError, ValueError):
+        return _DEFAULT_UI_SCALE
+    if not UI_SCALE_MIN <= value <= UI_SCALE_MAX:
+        return _DEFAULT_UI_SCALE
+    return value
+
+
+def set_ui_scale(factor: float | None) -> float:
+    """Persist the UI scale (``None`` restores the default). Returns the value stored.
+
+    Out-of-range values are clamped rather than rejected, so a slider or a typed
+    number can never leave the app unreadable.
+    """
+    data = _load()
+    if factor is None:
+        data.pop(_UI_SCALE_KEY, None)
+    else:
+        data[_UI_SCALE_KEY] = min(max(float(factor), UI_SCALE_MIN), UI_SCALE_MAX)
+    _save(data)
+    return ui_scale()
+
+
 __all__ = [
+    "UI_SCALE_MAX",
+    "UI_SCALE_MIN",
     "analysis_dir",
     "config_path",
     "measurements_dir",
     "results_dir",
     "set_results_dir",
     "set_theme",
+    "set_ui_scale",
     "theme",
+    "ui_scale",
 ]

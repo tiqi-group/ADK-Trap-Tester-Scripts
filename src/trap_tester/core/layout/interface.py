@@ -39,7 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from trap_tester.core.layout.addressing import synthetic_addresses
+from trap_tester.core.layout.addressing import is_synthetic, synthetic_addresses
 from trap_tester.core.layout.primitives import (
     Circle,
     Line,
@@ -199,13 +199,24 @@ class Slot:
     def display_label(self) -> str:
         """Text drawn inside the shape.
 
-        Defaults to the pad's own name where it has one — on a trap or an LGA the
-        electrode / pad name is what an operator reads — and to the pin number on
-        the tester's own interfaces, which have no ident.
+        ``label`` is an *override*; an empty one is no override, not a request to
+        draw nothing. Without it the pad's own name is used — on a trap or an LGA the
+        electrode / pad name is what an operator reads — falling back to the pin
+        number on the tester's own interfaces, which have no ident.
+
+        (Treating ``""`` as "hide" is what broke every custom layout after the v2
+        change: their generators write ``label: ""`` meaning "no override, use the
+        ident", so the fallback became unreachable and the electrodes went blank.
+        Density is the renderer's problem, handled by its label level-of-detail, so
+        nothing needs a way to blank a label from the data.)
+
+        The pin fallback is skipped on a synthetic address: that number is made up,
+        and drawing it would read as a real pin. Such a pad is left unlabelled rather
+        than mislabelled.
         """
-        if self.label is not None:
-            return self.label
-        return self.ident if self.ident else str(self.pin)
+        if self.label or self.ident:
+            return self.label or self.ident or ""
+        return "" if is_synthetic(self.connector) else str(self.pin)
 
     def extent(self) -> tuple[float, float, float, float]:
         """``(xmin, xmax, ymin, ymax)`` covering every shape of the pad."""

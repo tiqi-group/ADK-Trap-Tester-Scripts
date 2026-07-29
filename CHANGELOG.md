@@ -30,6 +30,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     mark keeps its meaning when a different mapping CSV is loaded.
   - layouts declare a stable `slug` and `match_by`, so a mapping column is found by
     name instead of guessed from "which layout's idents does it overlap most?".
+  - a pad's drawn label resolves as override → `ident` → pin, so trap electrodes and
+    LGA pads are captioned with their own names. The pin fallback is skipped on a
+    placeholder address, so a made-up number is never drawn as if it were a real pin.
+  - the ion-trap importer finds its electrode column by the layout's slug (a rich
+    export heads it with the trap name, not `Electrode`) and normalises the
+    bank-encoded pin on ingest, so a generated trap layout is canonical without
+    editing the upstream export.
   - layout JSON contains no colours: a primitive names a `style`, resolved from one
     table at load.
   - pads with no recorded wiring get distinct addresses in a reserved synthetic
@@ -64,11 +71,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-interface channel-mapping model, zoom/pan, and import/search-folder
   support.
 - **Split view** toggle in the Interfaces panel: show two interfaces side by side
-  in a draggable splitter, each with its own interface and connector selection.
-  Both share one annotation set, so a channel marked on either appears
-  immediately on the other — the cross-interface correlation is visible without
-  switching. "Save view…" captures both panes when split.
+  in a draggable splitter, each with its own interface and connector selection —
+  placed directly under that view's canvas, so it is unambiguous which pane a
+  control drives. Both share one annotation set, so a channel marked on either
+  appears immediately on the other — the cross-interface correlation is visible
+  without switching. "Save view…" captures both panes when split (the per-view
+  controls are excluded from the image).
 - Light/dark theming with a live toggle in the Settings panel.
+- **UI scale** setting (Settings → Appearance): 100–250 % for high-DPI screens
+  where the desktop's own scaling leaves text and controls too small. It goes
+  through Qt's scale factor, so widgets, text and the matplotlib canvases all grow
+  together. Qt fixes that factor when the application is created, so the choice
+  applies on restart — the panel says so. An explicit `QT_SCALE_FACTOR` in the
+  environment still overrides the setting for a one-off run.
 - Standalone executable build via PyInstaller (`trap-tester.spec` +
   `packaging/`); see the README.
 - GitHub Actions workflow that builds, smoke-tests and publishes bundles for
@@ -93,6 +108,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Reorganized the repository: regression suites moved to `tests/`, legacy
   hardware/SPICE scripts moved to `scripts/hardware/`.
 - Bumped the ruff target version to match `requires-python` (>= 3.11).
+- The stylesheet now sizes fonts in points rather than pixels, so the app follows
+  the desktop's font-size preference instead of pinning text to 12 px.
 
 ### Removed
 - Erroneous `wavefront-sdk-python` dependency (VMware observability SDK, unused;

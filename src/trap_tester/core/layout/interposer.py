@@ -95,13 +95,13 @@ def build_interposer(
 
     slots = [
         Slot(connector=c, pin=pin, x=_x(letters), y=_y(row), r=PAD_R,
-             shape="circle", label="",
+             shape="circle",
              ident=f"{letters}{row}")  # the LGA pad name, the interposer's mapping key
         for (letters, row), c, pin in parsed_signal
     ]
     slots += [
         Slot(connector=0, pin=UNSET_PIN, x=_x(letters), y=_y(row), r=PAD_R,
-             shape="circle", label="", pad_class=t, ident=f"{letters}{row}")
+             shape="circle", pad_class=t, ident=f"{letters}{row}")
         for (letters, row), t in parsed_decoration
     ]
     assign_synthetic_addresses(slots)

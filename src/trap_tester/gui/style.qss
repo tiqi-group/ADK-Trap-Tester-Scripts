@@ -2,7 +2,7 @@
    Interactive elements green, viewers red; light/dark share this template. */
 
 QWidget {
-    font-size: 12px;
+    font-size: 9pt;
     background: $window_bg;
     color: $text;
 }
@@ -16,7 +16,7 @@ QPushButton[role="menu"] {
     color: $menu_text;
     border: none;
     padding: 6px 14px;
-    font-size: 14px;
+    font-size: 10pt;
 }
 QPushButton[role="menu"]:checked {
     background: $menu_sel;

@@ -84,7 +84,7 @@ most worth deleting:
 | `pin` | int | yes | pin within `pin_space`, **physical** (1..50 for `dsub_pin`) — no hundreds-digit encoding |
 | `ident` | str \| null | yes when `match_by == "ident"` | opaque at match time; must not contain a comma |
 | `class` | str | no, default `"signal"` | `"signal"`, `"gnd"`, `"rf"`, `"loopback"`, `"sensor_heater"`, `"axialisation"`. Only `"signal"` is measurable/clickable. An unknown class still renders, in a grey fallback. |
-| `label` | str \| null | no | in-shape text; `null` ⇒ fall back to `ident`, then `pin`; `""` hides |
+| `label` | str \| null | no | in-shape text **override**; empty or absent ⇒ fall back to `ident`, then `pin`. There is deliberately no way to blank a label from the data — density is the renderer's job, via its label level-of-detail. |
 | `shapes` | list[SlotShape] | yes, ≥1 | the slot's drawn geometry |
 | ~~`channel`~~ | — | **removed** | derived from `(connector, pin)` + `pin_space` |
 | ~~`x`,`y`,`r`,`rot`,`shape`~~ | — | **removed** | always expressed as one `shapes` entry |
@@ -203,8 +203,12 @@ addresses**.
 ## 5. Behaviour changes worth knowing
 
 * **Label fallback inverted.** v1 drew the pin number and fell back to `ident` only
-  when `label` was `""`. v2 falls back to `ident` first, then the pin — on a trap or
-  an LGA the electrode/pad name is what an operator reads, and the pin is nominal.
+  when `label` was `""`. v2 resolves `label` (if non-empty) → `ident` → `pin`, so on a
+  trap or an LGA the electrode/pad name is what an operator reads and the pin is
+  nominal. An *empty* label is "no override", not "draw nothing": reading it as
+  "hide" blanked every custom layout at once, since their generators emit an empty
+  label meaning exactly "no override, use the ident". The generators now emit `null`
+  instead, so new files are unambiguous, and both spellings resolve the same way.
 * **DSUB <-> FPC correlation is derived, not stamped.** v1 kept the two JSON files in
   agreement by writing a matching `channel` into both. They can no longer drift.
 * **Colours are resolved at load.** A primitive stores a `style` name; the concrete

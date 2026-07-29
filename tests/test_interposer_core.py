@@ -65,7 +65,8 @@ def test_signal_positions_and_row1_at_top():
     by_xy = {(s.x, s.y): s for s in lay.slots if s.is_signal}
     a1 = by_xy[(0.0, 4.0)]  # col A=0, row 1 -> y = 5-1 = 4 (top)
     assert (a1.connector, a1.pin) == (0, 3)
-    assert a1.label == ""
+    # no label override: the pad name is what gets drawn
+    assert a1.label is None and a1.display_label == "A1"
     a2 = by_xy[(0.0, 3.0)]
     assert a2.pin == 37 and a1.y > a2.y  # row 1 above row 2
 

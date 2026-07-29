@@ -199,6 +199,46 @@ def test_multi_connector_findings_placed_per_connector():
 # --- FPC ribbon + the canonical address as translation layer ----------------
 
 
+def test_label_precedence_override_then_ident_then_pin():
+    """An empty label is *no override*, not "draw nothing".
+
+    Regression: v2 briefly read ``label == ""`` as "hide", which blanked every custom
+    layout at once — their generators write an empty label meaning "no override, use
+    the ident", so the ident fallback became unreachable and trap electrodes lost
+    their names (hover still worked, since that comes from the message, which is what
+    made it look like a renderer problem).
+    """
+    pin_only = Slot(connector=0, pin=7, x=0.0, y=0.0)
+    assert pin_only.display_label == "7"  # no ident: the tester's own interfaces
+    named = Slot(connector=0, pin=7, x=0.0, y=0.0, ident="WZ_DCL3_6")
+    assert named.display_label == "WZ_DCL3_6"  # ident wins over the pin
+    blank = Slot(connector=0, pin=7, x=0.0, y=0.0, ident="WZ_DCL3_6", label="")
+    assert blank.display_label == "WZ_DCL3_6"  # "" is not an override
+    explicit = Slot(connector=0, pin=7, x=0.0, y=0.0, ident="WZ_DCL3_6", label="E1")
+    assert explicit.display_label == "E1"  # a real override wins over both
+
+
+def test_a_synthetic_pin_is_never_drawn_as_a_label():
+    """A made-up address must not be presented as if it were a real pin number."""
+    from trap_tester.core.layout.addressing import SYNTHETIC_CONNECTOR_BASE
+
+    made_up = Slot(connector=SYNTHETIC_CONNECTOR_BASE, pin=7, x=0.0, y=0.0)
+    assert made_up.display_label == ""  # unlabelled beats mislabelled
+    # ...but a name, when it has one, is still worth drawing
+    named = Slot(connector=SYNTHETIC_CONNECTOR_BASE, pin=7, x=0.0, y=0.0, ident="RF_0")
+    assert named.display_label == "RF_0"
+
+
+def test_generated_trap_electrodes_are_labelled():
+    """Every drawn shape of a trap net carries the electrode name."""
+    lay = build_iontrap(
+        _trap_geometry(), mapping=[("DC_0", 0, 1), ("GRP", 1, 5)], name="t"
+    )
+    drawing = build_annotation_drawing(lay, AnnotationSet())
+    assert drawing.pins and all(p.label for p in drawing.pins)
+    assert {p.label for p in drawing.pins} >= {"DC_0", "GRP"}
+
+
 def test_a_v1_layout_is_rejected():
     """Only schema 2 loads.
 

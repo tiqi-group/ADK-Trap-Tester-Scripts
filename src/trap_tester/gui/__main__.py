@@ -2,22 +2,44 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import traceback
 
 from PySide6.QtWidgets import QApplication
 
 from trap_tester.core.appconfig import theme as configured_theme
+from trap_tester.core.appconfig import ui_scale as configured_ui_scale
 from trap_tester.gui import theme
 from trap_tester.gui.main_window import MainWindow
 
 _SMOKE_FLAG = "--smoke-test"
 
 
+def _apply_ui_scale() -> None:
+    """Apply the configured UI scale — must run before the ``QApplication`` exists.
+
+    Qt fixes its scale factor when the application is constructed, which is why the
+    Settings tab says the choice takes effect on restart. Going through Qt's own
+    scaling (rather than resizing fonts and widgets ourselves) means *everything*
+    grows together, including the matplotlib canvases and Qt's built-in widget
+    metrics like scrollbar widths.
+
+    An explicit ``QT_SCALE_FACTOR`` in the environment wins, so a one-off
+    ``QT_SCALE_FACTOR=2 trap-tester-gui`` still overrides the setting.
+    """
+    if os.environ.get("QT_SCALE_FACTOR"):
+        return
+    scale = configured_ui_scale()
+    if scale != 1.0:
+        os.environ["QT_SCALE_FACTOR"] = str(scale)
+
+
 def main() -> int:
     argv = [a for a in sys.argv if a != _SMOKE_FLAG]
     smoke = _SMOKE_FLAG in sys.argv
 
+    _apply_ui_scale()
     app = QApplication(argv)
     app.setApplicationName("Trap Tester")
 

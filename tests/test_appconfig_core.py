@@ -68,6 +68,30 @@ def test_theme_default_and_persist(isolated_config):
     assert appconfig.set_theme("nonsense") == "light"  # unknown -> default
 
 
+def test_ui_scale_default_and_persist(isolated_config):
+    assert appconfig.ui_scale() == 1.0  # default: follow the desktop's own scaling
+    assert appconfig.set_ui_scale(1.5) == 1.5
+    assert appconfig.ui_scale() == 1.5
+    assert appconfig.set_ui_scale(None) == 1.0  # None restores the default
+
+
+def test_ui_scale_is_clamped_not_rejected(isolated_config):
+    """A bad factor must never leave the app unreadable, so it is clamped."""
+    assert appconfig.set_ui_scale(99.0) == appconfig.UI_SCALE_MAX
+    assert appconfig.set_ui_scale(0.0) == appconfig.UI_SCALE_MIN
+
+
+def test_ui_scale_ignores_a_corrupt_value(isolated_config):
+    """A hand-edited config with nonsense in it falls back rather than crashing."""
+    import json
+
+    appconfig.set_ui_scale(1.5)
+    data = json.loads(appconfig.config_path().read_text())
+    data["ui_scale"] = "huge"
+    appconfig.config_path().write_text(json.dumps(data))
+    assert appconfig.ui_scale() == 1.0
+
+
 def test_theme_and_results_coexist(isolated_config):
     appconfig.set_results_dir("/data/x")
     appconfig.set_theme("dark")

@@ -32,6 +32,7 @@ import json
 import sys
 from pathlib import Path
 
+from trap_tester.core.layout.addressing import PINS_PER_CONNECTOR
 from trap_tester.core.layout.interface import (
     UNSET_PIN,
     InterfaceLayout,
@@ -44,6 +45,9 @@ from trap_tester.core.layout.store import ensure_user_layouts_dir
 # geometry coords are in metres; the trap is a few mm across -> draw in mm
 M_TO_MM = 1000.0
 _CONNECTOR_KEYS = ("Connector_Num", "Connector number", "Connector")
+_PIN_KEYS = ("DSUB_Pin", "DSUB-Pin", "Pin")
+# The upstream export encodes the connector bank in a hundreds digit; see _ingest_pin.
+_PIN_BANK_MODULO = 100
 
 
 def _scale(poly: list[list[float]]) -> list[list[float]]:
@@ -83,7 +87,7 @@ def build_iontrap(
         cy = sum(s.y for s in shapes) / len(shapes)
         slots.append(
             Slot(connector=connector, pin=pin, x=cx, y=cy,
-                 label="", ident=elec_name, shapes=shapes)
+                 ident=elec_name, shapes=shapes)
         )
 
     slots += _unrouted_slots(geometry, consumed)
@@ -115,26 +119,75 @@ def _unrouted_slots(geometry: dict, consumed: set[str]) -> list[Slot]:
             Slot(connector=0, pin=UNSET_PIN,
                  x=sum(s.x for s in shapes) / len(shapes),
                  y=sum(s.y for s in shapes) / len(shapes),
-                 label="", pad_class="rf" if raw_type == "RF" else raw_type,
+                 pad_class="rf" if raw_type == "RF" else raw_type,
                  ident=elec["name"], shapes=shapes)
         )
     return slots
 
 
-def _read_mapping(csv_path: str | Path) -> list[tuple[str, int, int]]:
-    """Parse the electrode→DSUB CSV, tolerating the connector-column spelling."""
+def _read_mapping(
+    csv_path: str | Path, slug: str | None = None
+) -> list[tuple[str, int, int]]:
+    """Parse the electrode→DSUB CSV from an upstream export.
+
+    Tolerates the connector- and pin-column spellings, finds the electrode column by
+    ``slug`` (or ``Electrode``), and normalises the bank-encoded pin. Rows with no
+    electrode name are skipped, so a rich export whose other columns run longer than
+    this trap's does not produce empty nets.
+    """
     with Path(csv_path).open(newline="") as fh:
         reader = csv.DictReader(fh)
-        fields = reader.fieldnames or []
+        fields = list(reader.fieldnames or [])
         conn_key = next((k for k in _CONNECTOR_KEYS if k in fields), None)
         if conn_key is None:
             raise ValueError(
                 f"{csv_path}: no connector column (looked for {_CONNECTOR_KEYS})"
             )
+        elec_key = _electrode_key(fields, slug, csv_path)
+        pin_key = next((k for k in _PIN_KEYS if k in fields), None)
+        if pin_key is None:
+            raise ValueError(f"{csv_path}: no pin column (looked for {_PIN_KEYS})")
         return [
-            (row["Electrode"], int(row[conn_key]), int(row["DSUB_Pin"]))
+            (row[elec_key], int(row[conn_key]), _ingest_pin(row[pin_key]))
             for row in reader
+            if (row.get(elec_key) or "").strip()
         ]
+
+
+def _electrode_key(fields: list[str], slug: str | None, csv_path: str | Path) -> str:
+    """Which column names the electrodes.
+
+    Upstream exports use two shapes: a plain ``Electrode`` column, or — when the CSV
+    also describes other interfaces — a column headed with this layout's slug (the
+    same convention a cross-interface mapping CSV uses). Prefer the slug, so a rich
+    export can be imported without renaming anything.
+    """
+    if slug:
+        match = next((f for f in fields if f.casefold() == slug.casefold()), None)
+        if match is not None:
+            return match
+    if "Electrode" in fields:
+        return "Electrode"
+    raise ValueError(
+        f"{csv_path}: no electrode column — expected 'Electrode' or {slug!r}, "
+        f"found {fields}"
+    )
+
+
+def _ingest_pin(raw: str) -> int:
+    """A physical DSUB pin from an upstream export.
+
+    The previous tooling recorded the connector bank in a hundreds digit (129 on
+    connector 7 -> physical pin 29), which is redundant once the connector is its own
+    column. It is normalised away **here, at ingest**, the same way this reader already
+    tolerates three spellings of the connector column: foreign source data is cleaned
+    on the way in so the generated layout is canonical. The runtime mapping loader
+    deliberately does *not* do this — it rejects an out-of-range pin instead.
+    """
+    pin = int(raw) % _PIN_BANK_MODULO
+    if not 1 <= pin <= PINS_PER_CONNECTOR:
+        raise ValueError(f"pin {raw!r} is not a DSUB pin (1..{PINS_PER_CONNECTOR})")
+    return pin
 
 
 def generate_iontrap(
@@ -144,8 +197,9 @@ def generate_iontrap(
 ) -> InterfaceLayout:
     """Read the geometry JSON + mapping CSV and build the trap layout."""
     geometry = json.loads(Path(geometry_path).read_text())
-    mapping = _read_mapping(mapping_path)
-    return build_iontrap(geometry, mapping, name=name or Path(geometry_path).stem)
+    layout_name = name or Path(geometry_path).stem
+    mapping = _read_mapping(mapping_path, slug=layout_name)
+    return build_iontrap(geometry, mapping, name=layout_name)
 
 
 def _dump() -> None:

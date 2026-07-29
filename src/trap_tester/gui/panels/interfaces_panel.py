@@ -2,10 +2,12 @@
 
 Two columns:
 
-Left  — controls (green): interface selector + Import, connector, and
-        Save / Load / Clear for the annotation set, plus a live summary.
-Right — the interactive annotation view (red): a bare interface sketch whose
-        pins are clicked to cycle no comment → suspicious → faulty.
+Left  — controls (green) that are not about one view: layout Import / Folders, the
+        split toggle, the mapping, and Save / Load / Clear for the annotation set,
+        plus a live summary.
+Right — the interactive annotation view (red): a bare interface sketch whose pins
+        are clicked to cycle no comment → suspicious → faulty, with that view's own
+        interface and connector selectors directly beneath its canvas.
 
 Marks are keyed by the canonical address, so switching the interface (or connector)
 re-projects the same marks — the tool for correlating an operator-reported fault
@@ -14,8 +16,9 @@ along the mechanical interfaces. The set round-trips to JSON via Save / Load.
 **Split view** shows two interfaces side by side instead of switching between them.
 Both views share one :class:`AnnotationSet`, so a mark made on either appears
 immediately on the other — the correlation is visible without switching. Each side
-picks its own interface (and connector, for the built-ins); the mapping and the
-annotation set are shared, since they describe the setup rather than one view.
+picks its own interface and connector *under its own canvas*, so it is unambiguous
+which pane a control drives; the mapping and the annotation set are shared, since
+they describe the setup rather than one view.
 """
 
 from __future__ import annotations
@@ -23,6 +26,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -67,47 +71,42 @@ _BUILTINS = [
 
 
 class _InterfaceSource(QWidget):
-    """One side's interface choice: layout selector + connector + "Show all".
+    """One side's interface choice: which layout, plus its connector controls.
 
-    The panel owns one of these per view, so the two sides of the split view are
-    picked independently. Emits :data:`changed` whenever any of the three changes.
+    Both the layout selector and the connector bar are placed *under that view's
+    canvas* rather than in the panel's left column: in split view, two identical rows
+    of controls stacked in one column give no clue which picture they drive. The panel
+    owns one of these per view, so the two sides are picked independently. Emits
+    :data:`changed` whenever any of the three changes.
     """
 
     changed = Signal()
 
-    def __init__(self, buttons: list[QWidget] | None = None) -> None:
+    def __init__(self) -> None:
         super().__init__()
-        v = QVBoxLayout(self)
-        v.setContentsMargins(0, 0, 0, 0)
-
-        row = QHBoxLayout()
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Interface:"))
         self.selector = QComboBox()
         self.selector.setProperty("role", "interactive")
         self.selector.currentIndexChanged.connect(self.changed)
         row.addWidget(self.selector, 1)
-        for btn in buttons or []:
-            row.addWidget(btn)
-        v.addLayout(row)
 
-        conn_row = QHBoxLayout()
-        conn_row.addWidget(QLabel("Connector:"))
-        self.conn_spin = QSpinBox()
-        self.conn_spin.setProperty("role", "interactive")
-        self.conn_spin.setRange(0, TESTER_CONNECTORS - 1)  # 0-indexed; bounded
-        self.conn_spin.valueChanged.connect(self.changed)
-        conn_row.addWidget(self.conn_spin)
-        conn_row.addStretch(1)
-        self.show_all = QCheckBox("Show all")
-        self.show_all.setProperty("role", "interactive")
-        self.show_all.setToolTip(
-            "Render every connector instance at once (zoom / pan to inspect).\n"
-            "Connectors come from the mapping when one is loaded, else a default set."
-        )
-        self.show_all.toggled.connect(self.changed)
-        conn_row.addWidget(self.show_all)
-        v.addLayout(conn_row)
+        # The connector controls sit beside this selector under the canvas; see
+        # :meth:`_build_pane`. Owned here so one object still represents "this side's
+        # choice", but placed by the panel.
+        self.connector_bar = _ConnectorBar()
+        self.connector_bar.changed.connect(self.changed)
 
     # ---- state -------------------------------------------------------------
+    @property
+    def conn_spin(self) -> QSpinBox:
+        return self.connector_bar.conn_spin
+
+    @property
+    def show_all(self) -> QCheckBox:
+        return self.connector_bar.show_all
+
     def token(self):
         return self.selector.currentData()
 
@@ -143,7 +142,40 @@ class _InterfaceSource(QWidget):
 
     def sync_enabled(self, conn_max: int) -> None:
         """Grey out the connector controls where they do not apply."""
-        builtin = self.is_builtin()
+        self.connector_bar.sync_enabled(self.is_builtin(), conn_max)
+
+
+class _ConnectorBar(QWidget):
+    """Which connector one view shows: the spin box and "Show all".
+
+    Sits at the bottom of its own plot pane rather than in the left column, so in
+    split view it is unambiguous which canvas it drives.
+    """
+
+    changed = Signal()
+
+    def __init__(self) -> None:
+        super().__init__()
+        row = QHBoxLayout(self)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Connector:"))
+        self.conn_spin = QSpinBox()
+        self.conn_spin.setProperty("role", "interactive")
+        self.conn_spin.setRange(0, TESTER_CONNECTORS - 1)  # 0-indexed; bounded
+        self.conn_spin.valueChanged.connect(self.changed)
+        row.addWidget(self.conn_spin)
+        row.addStretch(1)
+        self.show_all = QCheckBox("Show all")
+        self.show_all.setProperty("role", "interactive")
+        self.show_all.setToolTip(
+            "Render every connector instance at once (zoom / pan to inspect).\n"
+            "Connectors come from the mapping when one is loaded, else a default set."
+        )
+        self.show_all.toggled.connect(self.changed)
+        row.addWidget(self.show_all)
+
+    def sync_enabled(self, builtin: bool, conn_max: int) -> None:
+        """Grey out the controls where they do not apply."""
         self.show_all.setEnabled(builtin)
         # single-connector picker is moot for custom layouts and when showing all
         self.conn_spin.setEnabled(builtin and not self.show_all.isChecked())
@@ -247,10 +279,19 @@ class InterfacesPanel(QWidget):
         )
         self._folders_btn.clicked.connect(self._manage_folders)
 
-        # Import / Folders are global actions, so they live on the first side only.
-        self._src_a = _InterfaceSource([self._import_btn, self._folders_btn])
+        # Import / Folders act on the layout store, not on one view, so they stay in
+        # this column. Which interface each view shows is per-view, so those selectors
+        # live under their own canvas — see :meth:`_build_pane`.
+        btn_row = QHBoxLayout()
+        btn_row.addWidget(self._import_btn)
+        btn_row.addWidget(self._folders_btn)
+        btn_row.addStretch(1)
+        sel_v.addLayout(btn_row)
+
+        self._src_a = _InterfaceSource()
         self._src_a.changed.connect(self._update_view)
-        sel_v.addWidget(self._src_a)
+        self._src_b = _InterfaceSource()
+        self._src_b.changed.connect(self._update_view)
 
         self._split = QCheckBox("Split view (two interfaces side by side)")
         self._split.setProperty("role", "interactive")
@@ -261,14 +302,10 @@ class InterfacesPanel(QWidget):
         self._split.toggled.connect(self._on_split_toggled)
         sel_v.addWidget(self._split)
 
-        self._second_label = QLabel("Second interface:")
-        sel_v.addWidget(self._second_label)
-        self._src_b = _InterfaceSource()
-        self._src_b.changed.connect(self._update_view)
-        sel_v.addWidget(self._src_b)
-
+        # The mapping name plus its Import button do not fit one line in this column,
+        # so label it above rather than squeezing the combo into a truncated stub.
+        sel_v.addWidget(QLabel("Mapping:"))
         map_row = QHBoxLayout()
-        map_row.addWidget(QLabel("Mapping:"))
         self._mapping_selector = QComboBox()
         self._mapping_selector.setProperty("role", "interactive")
         self._mapping_selector.setToolTip(
@@ -294,12 +331,7 @@ class InterfacesPanel(QWidget):
         )
         hint.setWordWrap(True)
         sel_v.addWidget(hint)
-        self._set_second_visible(False)
         return sel_box
-
-    def _set_second_visible(self, visible: bool) -> None:
-        self._second_label.setVisible(visible)
-        self._src_b.setVisible(visible)
 
     def _build_annotations_box(self) -> QWidget:
         marks_box = QGroupBox("Annotations")
@@ -346,15 +378,35 @@ class InterfacesPanel(QWidget):
         self._view_a.changed.connect(self._on_marks_changed)
         self._view_b.changed.connect(self._on_marks_changed)
 
+        # Each pane is its canvas plus that side's connector controls, so the
+        # controls travel with the picture they change.
+        self._pane_a = self._build_pane(self._view_a, self._src_a)
+        self._pane_b = self._build_pane(self._view_b, self._src_b)
+
         # a splitter so the divider can be dragged when the two differ in shape
         self._views = QSplitter(Qt.Horizontal)
-        self._views.addWidget(self._view_a)
-        self._views.addWidget(self._view_b)
+        self._views.addWidget(self._pane_a)
+        self._views.addWidget(self._pane_b)
         self._views.setStretchFactor(0, 1)
         self._views.setStretchFactor(1, 1)
-        self._view_b.setVisible(False)
+        self._pane_b.setVisible(False)
         v.addWidget(self._views)
         return box
+
+    @staticmethod
+    def _build_pane(view: AnnotationView, src: _InterfaceSource) -> QWidget:
+        """One plot pane: the canvas, with that view's own controls beneath it.
+
+        Reading downward: the picture, which interface it is, and which connector of
+        that interface. Everything that changes *this* canvas is in this column.
+        """
+        pane = QWidget()
+        layout = QVBoxLayout(pane)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(view, 1)
+        layout.addWidget(src)
+        layout.addWidget(src.connector_bar)
+        return pane
 
     def _on_marks_changed(self) -> None:
         sender = self.sender()
@@ -462,8 +514,7 @@ class InterfacesPanel(QWidget):
         return self._mapping_cache[token]
 
     def _on_split_toggled(self, on: bool) -> None:
-        self._set_second_visible(on)
-        self._view_b.setVisible(on)
+        self._pane_b.setVisible(on)
         if on and self._views.sizes()[1] == 0:
             half = max(self._views.width() // 2, 1)
             self._views.setSizes([half, half])
@@ -610,16 +661,34 @@ class InterfacesPanel(QWidget):
             path += ".png"
         try:
             if split:
-                self._view_a.canvas.draw()
-                self._view_b.canvas.draw()
-                if not self._views.grab().save(path):
-                    raise OSError(f"could not write image to {path}")
+                self._save_both_panes(path)
             else:
                 self._view_a.save_view(path)
         except Exception as exc:
             QMessageBox.warning(self, "Save failed", f"Could not save image:\n{exc}")
             return
         self._summary.setText(self._summary.text() + f"\nView saved to {Path(path).name}.")
+
+    def _save_both_panes(self, path: str) -> None:
+        """Write the two canvases side by side into one PNG.
+
+        Grabs each :class:`AnnotationView` rather than the splitter, so the connector
+        controls that now sit at the bottom of each pane stay out of the exported
+        image — the export is the comparison, not the widgets that produced it.
+        """
+        self._view_a.canvas.draw()
+        self._view_b.canvas.draw()
+        left, right = self._view_a.grab(), self._view_b.grab()
+        out = QPixmap(left.width() + right.width(), max(left.height(), right.height()))
+        out.fill(self.palette().color(QPalette.Window))  # matches the active theme
+        painter = QPainter(out)
+        try:
+            painter.drawPixmap(0, 0, left)
+            painter.drawPixmap(left.width(), 0, right)
+        finally:
+            painter.end()
+        if not out.save(path):
+            raise OSError(f"could not write image to {path}")
 
     def _update_summary(self) -> None:
         counts = self._view_a.annotations().counts()  # shared with view B

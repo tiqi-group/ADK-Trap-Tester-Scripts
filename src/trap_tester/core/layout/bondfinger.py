@@ -58,7 +58,7 @@ def build_bondfinger(
         connector, pin = cp if cp is not None else (0, UNSET_PIN)
         slots.append(Slot(
             connector=connector, pin=pin, x=float(x), y=-float(y),  # PCB y is down
-            r=FINGER_R, shape="rect", label="",
+            r=FINGER_R, shape="rect",
             ident=str(finger),  # the bond-finger number, this layout's mapping key
         ))
     assign_synthetic_addresses(slots)
