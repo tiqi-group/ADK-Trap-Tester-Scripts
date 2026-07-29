@@ -8,8 +8,11 @@ Build (onedir) with the packaging deps installed::
 
 Output: ``dist/trap-tester/`` (a self-contained folder; the launcher is
 ``dist/trap-tester/trap-tester``, ``trap-tester.exe`` on Windows).  Archive that
-folder to distribute.  On macOS an app bundle ``dist/trap-tester.app`` is built
-from the same collection as well — that is the artifact to ship there.
+folder to distribute.  On macOS an app bundle ``dist/trap-tester.app`` is built from
+the same collection as well, but macOS bundles are NOT shipped: unsigned and
+un-notarised, Gatekeeper refuses to open a downloaded copy.  On a Mac, run from
+source with ``uv run trap-tester-gui``.  The BUNDLE step is kept for anyone building
+locally, and as the starting point if a signed release is ever worth the Developer ID.
 
 PyInstaller does NOT cross-compile: run this on each target OS to get that
 OS's binary, and on the target CPU architecture (an Apple-silicon build is not
@@ -185,9 +188,9 @@ coll = COLLECT(
 
 # macOS: wrap the collected folder in a double-clickable .app.  BUNDLE is a
 # no-op on other platforms, but guard it anyway so the Linux/Windows builds are
-# unmistakably unaffected.  The bundle is NOT code-signed or notarised, so a
-# downloaded copy is quarantined by Gatekeeper until the user clears it with
-# ``xattr -dr com.apple.quarantine trap-tester.app``.
+# unmistakably unaffected.  Only useful for a local build — CI does not build macOS
+# (see the module docstring), because the bundle is neither code-signed nor
+# notarised and Gatekeeper will not open a downloaded copy.
 if sys.platform == "darwin":
     app = BUNDLE(  # noqa: F821  (injected into the spec namespace by PyInstaller)
         coll,

@@ -44,10 +44,16 @@ uv run pyinstaller trap-tester.spec
 ```
 
 The result is `dist/trap-tester/` — a self-contained folder whose launcher is
-`dist/trap-tester/trap-tester` (`trap-tester.exe` on Windows). On macOS the same
-collection is additionally wrapped into a double-clickable app bundle,
-`dist/trap-tester.app`, which is the artifact to ship there. Archive the folder
-(or the bundle) to distribute it.
+`dist/trap-tester/trap-tester` (`trap-tester.exe` on Windows). Archive the folder
+to distribute it.
+
+**macOS is not distributed as a bundle** — run it from source instead, with
+`uv run trap-tester-gui`. The spec still wraps the collection into
+`dist/trap-tester.app` if you build it on a Mac yourself, but an unsigned,
+un-notarised bundle makes Gatekeeper refuse to open a downloaded copy, and asking
+users to strip the quarantine attribute is a worse experience than installing
+[uv](https://docs.astral.sh/uv/). Shipping one properly needs an Apple Developer ID
+plus `codesign` and `notarytool` steps in CI.
 
 Notes:
 
@@ -73,12 +79,9 @@ publishes an archive:
 | --- | --- | --- |
 | Linux x86_64 | `ubuntu-latest` | `trap-tester-<version>-linux-x86_64.tar.gz` |
 | Windows x86_64 | `windows-latest` | `trap-tester-<version>-windows-x86_64.zip` |
-| macOS Apple silicon | `macos-latest` | `trap-tester-<version>-macos-arm64.tar.gz` |
-| macOS Intel | `macos-15-intel` | `trap-tester-<version>-macos-x86_64.tar.gz` |
 
-* **Intel macOS is on borrowed time.** GitHub retires x86_64 macOS runners when
-  the `macos-15` image goes (autumn 2027); after that the Intel row has to drop
-  out unless it moves to self-hosted hardware.
+* **macOS is not built.** See the note above: on a Mac, run from source with
+  `uv run trap-tester-gui`.
 * **To cut a release, push a tag** — the workflow is triggered by any tag
   matching `v*`:
 
@@ -87,10 +90,10 @@ publishes an archive:
   git push origin v0.2.0
   ```
 
-  Once all four platforms have built and passed their smoke test, the workflow
+  Once both platforms have built and passed their smoke test, the workflow
   creates a GitHub release for that tag with auto-generated notes (the
-  commits/PRs since the previous tag) and attaches the four archives to it, so
-  the executables can be downloaded straight from the releases page. If any
+  commits/PRs since the previous tag) and attaches both archives to it, so the
+  executables can be downloaded straight from the releases page. If either
   platform fails, nothing is published — there is no half-finished release to
   clean up. Re-running the workflow on a tag replaces the existing assets.
 * **On a manual run** (*Actions → Build executables → Run workflow*) each
@@ -98,13 +101,7 @@ publishes an archive:
   `dev-<sha>`, and no release is created.
 
 To use one: download and extract the archive, then run the `trap-tester`
-launcher inside it (on macOS, open `trap-tester.app`). The macOS bundle is
-**not code-signed or notarised**, so Gatekeeper quarantines a downloaded copy —
-clear it once with:
-
-```bash
-xattr -dr com.apple.quarantine trap-tester.app
-```
+launcher inside it.
 
 ## Repository Structure
 

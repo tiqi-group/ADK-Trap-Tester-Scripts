@@ -1,6 +1,6 @@
 [project]
 name = "trap-tester"
-version = "0.1.0"
+version = "0.2.0"
 description = "GUI and scripts for the Modular Trap Tester analog frontend (Analog Discovery 2/3)."
 authors = [
     { name = "Michael Marti", email = "michael@zuriq.com" },

@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-29
+
 ### Changed
 - **Layout / mapping schema v2** (`docs/layout-schema-v2.md`). Meaning that the
   parser used to infer is now declared in the data, which removes whole classes of
@@ -87,12 +89,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Standalone executable build via PyInstaller (`trap-tester.spec` +
   `packaging/`); see the README.
 - GitHub Actions workflow that builds, smoke-tests and publishes bundles for
-  Linux x86_64, Windows x86_64 and macOS (Apple silicon and Intel). Pushing a
-  `v*` tag creates a release with auto-generated notes and attaches all four
-  archives to it; manual runs publish them as workflow artifacts instead.
-- macOS app bundle (`dist/trap-tester.app`) from the PyInstaller spec, so the
-  GUI is double-clickable there. It is not code-signed or notarised; see the
-  README for the Gatekeeper note.
+  Linux x86_64 and Windows x86_64. Pushing a `v*` tag creates a release with
+  auto-generated notes and attaches both archives to it; manual runs publish them
+  as workflow artifacts instead.
 - `--smoke-test` flag on the GUI launcher: builds every panel once and exits
   with a status instead of entering the event loop, used to verify frozen
   bundles in CI.
@@ -112,6 +111,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the desktop's font-size preference instead of pinning text to 12 px.
 
 ### Removed
+- **macOS bundles are no longer built or published.** An unsigned, un-notarised
+  `.app` will not open on a downloaded copy without the user stripping its
+  quarantine attribute, which is a worse experience than running from source — on
+  macOS, use `uv run trap-tester-gui`. The spec still builds `dist/trap-tester.app`
+  if you run PyInstaller on a Mac yourself; shipping one again needs an Apple
+  Developer ID plus `codesign`/`notarytool` steps, not just a CI matrix row.
 - Erroneous `wavefront-sdk-python` dependency (VMware observability SDK, unused;
   it is unrelated to Digilent WaveForms) and its transitive dependencies.
 - Legacy top-level `analysis/` scripts, superseded by `src/trap_tester/core/analysis/`.

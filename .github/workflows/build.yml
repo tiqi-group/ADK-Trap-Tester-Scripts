@@ -9,6 +9,13 @@ name: Build executables
 # PyInstaller does not cross-compile, so each bundle is built on a runner of
 # that OS *and* CPU architecture (see "Building a standalone executable" in the
 # README).
+#
+# macOS is deliberately NOT built here. An unsigned, un-notarised .app makes
+# Gatekeeper refuse to launch it, and telling users to strip the quarantine
+# attribute is worse than the alternative: on macOS, run from source with
+# `uv run trap-tester-gui`. Shipping a bundle again means paying for an Apple
+# Developer ID and adding codesign + notarytool steps, not just re-adding a
+# matrix row.
 
 on:
   # Release builds are tag-driven: `git tag v0.2.0 && git push origin v0.2.0`.
@@ -38,13 +45,6 @@ jobs:
             label: linux-x86_64
           - os: windows-latest
             label: windows-x86_64
-          - os: macos-latest
-            label: macos-arm64 # Apple silicon
-          - os: macos-15-intel
-            # The last Intel image, `macos-13`, was retired on 2025-12-04; a
-            # retired label is not an error, the job just queues forever. GitHub
-            # drops x86_64 macOS entirely when macos-15 retires (autumn 2027).
-            label: macos-x86_64 # Intel
     env:
       # Empty on a manual run, so the archives fall back to a `dev-<sha>` version.
       TAG: ${{ github.ref_type == 'tag' && github.ref_name || '' }}
@@ -55,7 +55,7 @@ jobs:
       - name: Install Qt runtime libraries
         if: runner.os == 'Linux'
         # PySide6 dlopen()s these; without them the offscreen smoke test below
-        # cannot load the Qt platform plugin. macOS/Windows runners ship theirs.
+        # cannot load the Qt platform plugin. The Windows runner ships its own.
         # libdwf (WaveForms) is deliberately absent everywhere — the app must
         # still start and show its "runtime missing" banner.
         run: |
@@ -80,21 +80,15 @@ jobs:
       - name: Build the bundle
         run: uv run pyinstaller --noconfirm trap-tester.spec
 
-      - name: Smoke-test the bundle (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Smoke-test the bundle (Linux)
+        if: runner.os == 'Linux'
         shell: bash
         env:
           QT_QPA_PLATFORM: offscreen
         # --smoke-test builds every panel and exits with a status instead of
         # entering the event loop, so a broken bundle fails here rather than
         # sitting in a timeout.
-        run: |
-          if [ "$RUNNER_OS" = macOS ]; then
-            launcher=./dist/trap-tester.app/Contents/MacOS/trap-tester
-          else
-            launcher=./dist/trap-tester/trap-tester
-          fi
-          "$launcher" --smoke-test
+        run: ./dist/trap-tester/trap-tester --smoke-test
 
       - name: Smoke-test the bundle (Windows)
         if: runner.os == 'Windows'
@@ -114,20 +108,16 @@ jobs:
             exit 1
           }
 
-      - name: Package the bundle (Linux/macOS)
-        if: runner.os != 'Windows'
+      - name: Package the bundle (Linux)
+        if: runner.os == 'Linux'
         shell: bash
-        # tar, not zip: it preserves the executable bit and the symlinks inside
-        # macOS frameworks (and upload-artifact re-zips whatever it is given).
+        # tar, not zip: it preserves the executable bit (upload-artifact re-zips
+        # whatever it is given, and zip would lose it).
         run: |
           version="${TAG:-dev-$(git rev-parse --short HEAD)}"
           name="trap-tester-${version}-${LABEL}"
-          if [ "$RUNNER_OS" = macOS ]; then
-            tar -czf "${name}.tar.gz" -C dist trap-tester.app
-          else
-            mv dist/trap-tester "dist/${name}"
-            tar -czf "${name}.tar.gz" -C dist "${name}"
-          fi
+          mv dist/trap-tester "dist/${name}"
+          tar -czf "${name}.tar.gz" -C dist "${name}"
           echo "ARCHIVE=${name}.tar.gz" >> "$GITHUB_ENV"
           echo "ARCHIVE_NAME=${name}" >> "$GITHUB_ENV"
 
