@@ -7,7 +7,7 @@ Left  — controls (green): interface selector + Import, connector, and
 Right — the interactive annotation view (red): a bare interface sketch whose
         pins are clicked to cycle no comment → suspicious → faulty.
 
-Marks are keyed by canonical channel, so switching the interface (or connector)
+Marks are keyed by the canonical address, so switching the interface (or connector)
 re-projects the same marks — the tool for correlating an operator-reported fault
 along the mechanical interfaces. The set round-trips to JSON via Save / Load.
 
@@ -41,13 +41,15 @@ from PySide6.QtWidgets import (
 from trap_tester.core.layout import (
     TESTER_CONNECTORS,
     AnnotationSet,
+    CoverageReport,
     Mapping,
     apply_to,
-    coverage,
+    coverage_report,
     dsub50_layout_for_connector,
     fpc_layout_for_connector,
     import_layout,
     import_mapping,
+    is_synthetic,
     load_csv,
     load_layout,
     mapping_options,
@@ -146,6 +148,47 @@ class _InterfaceSource(QWidget):
         # single-connector picker is moot for custom layouts and when showing all
         self.conn_spin.setEnabled(builtin and not self.show_all.isChecked())
         self.conn_spin.setMaximum(conn_max)
+
+
+def _placeholder_warning(layout) -> str | None:
+    """Say so when some pads are on made-up addresses rather than real wiring.
+
+    A geometry-only import (a trap, an LGA) knows where its pads *are* but not what
+    they route to; those slots get a distinct synthetic address so they can be
+    browsed and marked without colliding with a physical pin. That is useful but it
+    is not this setup's wiring, so it must not look like it: pick a mapping to get
+    the real addresses.
+    """
+    synthetic = sum(is_synthetic(s.connector) for s in layout.slots)
+    if not synthetic:
+        return None
+    return (
+        f"{synthetic} of {len(layout.slots)} pads are on placeholder addresses "
+        "(no mapping wires them) — they can be marked, but those marks do not "
+        "correspond to a physical pin."
+    )
+
+
+def _mapping_note(
+    name: str, report: CoverageReport, placeholder: str | None
+) -> str | None:
+    """The banner for an applied mapping, or ``None`` when there is nothing to act on.
+
+    A clean full match needs no banner. Anything else — idents the CSV does not name,
+    idents the layout does not have, cells that matched only ignoring case, pads left
+    on placeholder addresses — is named here, because each one is a data fix the
+    operator can actually make. v1 could only say "0 slots matched" or stay silent.
+    """
+    parts = [f"Mapping '{name}': {report.summary()}."]
+    if report.case_mismatches:
+        pairs = ", ".join(f"{a} ≈ {b}" for a, b in report.case_mismatches[:4])
+        parts.append(f"Matched ignoring case (fix the CSV): {pairs}.")
+    if placeholder:
+        parts.append(placeholder)
+    actionable = (
+        report.layout_only or report.csv_only or report.case_mismatches or placeholder
+    )
+    return " ".join(parts) if actionable else None
 
 
 class InterfacesPanel(QWidget):
@@ -343,7 +386,9 @@ class InterfacesPanel(QWidget):
         token = src.token()
         if src.is_builtin():
             is_dsub = token == "builtin:dsub50"
-            factory = dsub50_layout_for_connector if is_dsub else fpc_layout_for_connector
+            factory = (
+                dsub50_layout_for_connector if is_dsub else fpc_layout_for_connector
+            )
             if src.show_all.isChecked():
                 conns = self._connector_set(mapping)
                 label = ("DSUB-50" if is_dsub else "FPC ribbon") + " — all connectors"
@@ -357,7 +402,7 @@ class InterfacesPanel(QWidget):
                 # Custom layouts are shown whole — they may span several connectors
                 # (e.g. an interposer over 8 DSUB connectors).
                 base = load_layout(Path(token))
-            except Exception as exc:  # noqa: BLE001 — deleted / corrupt custom file
+            except Exception as exc:
                 QMessageBox.warning(
                     self, "Interface unavailable",
                     f"Could not load '{Path(token).name}':\n{exc}\n\n"
@@ -366,17 +411,23 @@ class InterfacesPanel(QWidget):
                 src.select_default()
                 base = dsub50_layout_for_connector(src.conn_spin.value())
         if mapping is None:
-            view.set_warning(None)
+            view.set_warning(_placeholder_warning(base))
             return base
-        if coverage(base, mapping) == 0:
-            name = self._mapping_selector.currentText()
+        return self._wire(base, mapping, view)
+
+    def _wire(self, base, mapping: Mapping, view: AnnotationView):
+        """Apply ``mapping`` to ``base`` and set the view's banner from the diff."""
+        report = coverage_report(base, mapping)
+        name = self._mapping_selector.currentText()
+        if report.count == 0:
             view.set_warning(
                 f"Mapping '{name}' does not apply to '{base.name}' — marks here "
                 "cannot propagate to or from other interfaces via this mapping."
             )
-        else:
-            view.set_warning(None)
-        return apply_to(base, mapping)
+            return base
+        wired = apply_to(base, mapping)
+        view.set_warning(_mapping_note(name, report, _placeholder_warning(wired)))
+        return wired
 
     def _refresh_mappings(self) -> None:
         """Rebuild the mapping selector from the search folders, keeping choice."""
@@ -398,7 +449,7 @@ class InterfacesPanel(QWidget):
         if token not in self._mapping_cache:
             try:
                 self._mapping_cache[token] = load_csv(Path(token))
-            except Exception as exc:  # noqa: BLE001 — deleted / malformed CSV
+            except Exception as exc:
                 QMessageBox.warning(
                     self, "Mapping unavailable",
                     f"Could not read '{Path(token).name}':\n{exc}\n\n"
@@ -445,7 +496,7 @@ class InterfacesPanel(QWidget):
             return
         try:
             dest = import_layout(path)
-        except Exception as exc:  # noqa: BLE001 — surface any parse/IO failure
+        except Exception as exc:
             QMessageBox.warning(
                 self, "Import failed",
                 f"'{Path(path).name}' is not a valid layout file:\n{exc}",
@@ -464,7 +515,7 @@ class InterfacesPanel(QWidget):
             return
         try:
             dest = import_mapping(path)
-        except Exception as exc:  # noqa: BLE001 — surface any parse/IO failure
+        except Exception as exc:
             QMessageBox.warning(
                 self, "Import failed",
                 f"'{Path(path).name}' is not a valid mapping CSV:\n{exc}",
@@ -511,7 +562,7 @@ class InterfacesPanel(QWidget):
             return
         try:
             annset = AnnotationSet.load_json(path)
-        except Exception as exc:  # noqa: BLE001 — parse / validation failure
+        except Exception as exc:
             QMessageBox.warning(
                 self, "Load failed",
                 f"'{Path(path).name}' is not a valid annotations file:\n{exc}",
@@ -565,7 +616,7 @@ class InterfacesPanel(QWidget):
                     raise OSError(f"could not write image to {path}")
             else:
                 self._view_a.save_view(path)
-        except Exception as exc:  # noqa: BLE001 — surface any render/IO failure
+        except Exception as exc:
             QMessageBox.warning(self, "Save failed", f"Could not save image:\n{exc}")
             return
         self._summary.setText(self._summary.text() + f"\nView saved to {Path(path).name}.")

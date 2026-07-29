@@ -2,10 +2,11 @@
 
 Builds on :class:`~trap_tester.gui.widgets.layout_canvas.LayoutCanvas`. A left
 click on a pin cycles its state (no comment → suspicious → faulty → no comment);
-because marks are keyed by the pin's canonical channel, switching the interface
-(the layout) re-projects the same marks onto the new interface. Pins with no
-channel (GND / shield) are inert. Emits :data:`changed` whenever a mark is
-toggled so a host panel can refresh its summary.
+because marks are keyed by the pin's canonical address, switching the interface
+(the layout) re-projects the same marks onto the new interface. Non-signal pads
+(GND / RF / …) and pins with no canonical address (an FPC shield conductor) are
+inert. Emits :data:`changed` whenever a mark is toggled so a host panel can refresh
+its summary.
 """
 
 from __future__ import annotations
@@ -14,10 +15,12 @@ from PySide6.QtCore import Signal
 
 from trap_tester.core.layout import (
     ANNOTATION_STATES,
+    SIGNAL_CLASS,
     AnnotationSet,
     Drawing,
     InterfaceLayout,
     build_annotation_drawing,
+    canonical_address,
 )
 from trap_tester.core.layout.annotation import (
     CLEAR_FILL,
@@ -80,11 +83,16 @@ class AnnotationView(LayoutCanvas):
     def _on_canvas_click(self, event) -> None:
         # a left-click that wasn't a pan (LayoutCanvas distinguishes them)
         pin = self._pin_at(event)
-        if pin is None or pin.channel is None:  # GND / shield / empty space
+        if pin is None or pin.pad_class != SIGNAL_CLASS:  # GND / RF / empty space
             return
-        # each pin carries its own connector, so a multi-connector layout marks
-        # the right (connector, channel) even when several are shown together.
-        self._annset.cycle(pin.connector, pin.channel)
+        if self._layout is None:
+            return
+        # Mark the pad's canonical address, so the same physical pin is marked
+        # whichever interface (and pin space) it was clicked on.
+        address = canonical_address(pin.connector, pin.pin, self._layout.pin_space)
+        if address is None:  # e.g. an FPC shield conductor
+            return
+        self._annset.cycle(*address)
         self._redraw()
         self.changed.emit()
 

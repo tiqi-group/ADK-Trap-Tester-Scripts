@@ -13,6 +13,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- **Layout / mapping schema v2** (`docs/layout-schema-v2.md`). Meaning that the
+  parser used to infer is now declared in the data, which removes whole classes of
+  special case rather than documenting them:
+  - a pad declares its `class` (`signal` / `gnd` / `rf` / `loopback` /
+    `sensor_heater` / `axialisation`) instead of the renderer recovering it by
+    matching hex fill colours — which only worked for circles, so ion-trap RF rails
+    (polygons) could never appear in a legend. Non-signal pads are ordinary slots
+    now, not hand-coloured background circles, and `background` is chrome only.
+  - `Slot.channel` is **gone**. It meant three incompatible things depending on
+    which generator wrote the file (a mux signal, an invented counter, or a
+    per-CSV net id). The canonical address is derived from `(connector, pin)` plus
+    the layout's `pin_space`, so a DSUB pin and the ribbon conductor carrying its
+    signal cannot drift out of agreement.
+  - annotations key on `(connector, pin)` — the apparatus' own address — so a saved
+    mark keeps its meaning when a different mapping CSV is loaded.
+  - layouts declare a stable `slug` and `match_by`, so a mapping column is found by
+    name instead of guessed from "which layout's idents does it overlap most?".
+  - layout JSON contains no colours: a primitive names a `style`, resolved from one
+    table at load.
+  - pads with no recorded wiring get distinct addresses in a reserved synthetic
+    band (connector 900+) instead of all colliding on `(0, 0)`; `is_synthetic()`
+    drives a "placeholder wiring" banner. Applying a mapping replaces them.
+  - the mapping CSV has canonical `connector`/`pin` headers and physical pins. The
+    six tolerated connector spellings and the `pin % 100` connector-bank rule are
+    gone from the parser and fixed in the data instead.
+  - `coverage()` grew into a diff: which idents matched, which the CSV does not
+    name, which the layout does not have, and which matched only ignoring case —
+    surfaced in the Interfaces banner. It immediately showed that 82 of
+    `interposer_BePe`'s 174 pads were silently unwired.
+  - `key_by`'s closed enum is now an open `pin_space` string, so a new interface
+    family needs no code change.
+  The loader accepts schema 2 only; v1 layout and annotation files are rejected with
+  a message pointing at the generator. The existing files were converted in place and
+  the upgrade path removed — pre-1.0, a loader that speaks one format is worth more
+  than back-compatibility with a shape nothing has shipped.
 - Smaller executable bundles: the PyInstaller spec now drops Qt runtime pieces the
   app cannot reach (the virtual-keyboard plugin and the QtQml/QtQuick stack it was
   the only user of, the GTK platform theme and its libgtk-3, the PDF image-format

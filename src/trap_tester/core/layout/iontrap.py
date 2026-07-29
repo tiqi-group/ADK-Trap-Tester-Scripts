@@ -14,13 +14,11 @@ A net is one measurement identity — one ``(connector, pin)`` — drawn as one
 is one net whose geometry is the *union* of its member polygons (the group name,
 not the members, is what the CSV maps). Every polygon of a net becomes a
 :class:`SlotShape`, so marking any co-wired pad marks the whole net for free.
-Because the trap's connectors/pins are a different family than the project's
-``mux_mapping``, the ``channel`` is not looked up — the importer assigns a
-unique channel per net itself.
 
-RF electrodes (and any other electrode the mapping never names) are unmapped:
-they render as fixed-colour background polygons — "decoration" that never reacts
-to measurement data.
+RF electrodes (and any other electrode the mapping never names) route to no tester
+pin: they become ``class="rf"`` slots with a synthetic placeholder address, so they
+are drawn in their class colour, appear in the legend (v1 drew them as background
+polygons, which the colour-sniffing legend could never see) and stay inert.
 
 Run ``python -m trap_tester.core.layout.iontrap <geometry.json> <mapping.csv>
 [name]`` to generate the layout JSON into the user layout store (it embeds the
@@ -34,9 +32,13 @@ import json
 import sys
 from pathlib import Path
 
-from trap_tester.core.layout.decoration import decoration_style
-from trap_tester.core.layout.interface import InterfaceLayout, Slot, SlotShape
-from trap_tester.core.layout.primitives import Polyline
+from trap_tester.core.layout.interface import (
+    UNSET_PIN,
+    InterfaceLayout,
+    Slot,
+    SlotShape,
+    assign_synthetic_addresses,
+)
 from trap_tester.core.layout.store import ensure_user_layouts_dir
 
 # geometry coords are in metres; the trap is a few mm across -> draw in mm
@@ -58,15 +60,14 @@ def build_iontrap(
     ``mapping`` is ``(electrode_or_group, connector, pin)`` per net. A name in
     ``geometry["cowired_groups"]`` expands to the union of its members' polygons;
     any other name is a single electrode. Electrodes never named by the mapping
-    (RF rails, unrouted pads) become fixed-colour background decoration. Channels
-    are assigned sequentially in mapping order so the layout is deterministic.
+    (RF rails, unrouted pads) become inert ``class="rf"`` slots on synthetic
+    addresses.
     """
     electrodes = {e["name"]: e for e in geometry["electrodes"]}
     cowired: dict[str, list[str]] = geometry.get("cowired_groups", {})
 
     slots: list[Slot] = []
     consumed: set[str] = set()  # electrodes drawn as (part of) a measurable net
-    channel = 0
     for elec_name, connector, pin in mapping:
         members = cowired.get(elec_name, [elec_name])
         shapes: list[SlotShape] = []
@@ -82,26 +83,42 @@ def build_iontrap(
         cy = sum(s.y for s in shapes) / len(shapes)
         slots.append(
             Slot(connector=connector, pin=pin, x=cx, y=cy,
-                 channel=channel, label="", ident=elec_name, shapes=shapes)
+                 label="", ident=elec_name, shapes=shapes)
         )
-        channel += 1
 
-    background: list[Polyline] = []
+    slots += _unrouted_slots(geometry, consumed)
+    assign_synthetic_addresses(slots)
+
+    return InterfaceLayout(
+        name=name, slug=name.casefold(), units="mm", pin_space="dsub_pin",
+        match_by="ident", background=[], slots=slots,
+    )
+
+
+def _unrouted_slots(geometry: dict, consumed: set[str]) -> list[Slot]:
+    """Slots for the electrodes the mapping never names (RF rails, unrouted pads).
+
+    They route to no tester pin, so they carry ``UNSET_PIN`` and are given a
+    synthetic address by the caller. Their class comes from the geometry's own
+    ``type``, so an RF rail is declared ``"rf"`` rather than being recognised later
+    by its colour.
+    """
+    slots: list[Slot] = []
     for elec in geometry["electrodes"]:
         if elec["name"] in consumed:
             continue
-        # RF rails get their datasheet colour; anything else falls back to grey
-        pad_type = "rf_lines" if elec.get("type") == "RF" else elec.get("type", "")
-        fill, stroke = decoration_style(pad_type)
-        background += [
-            Polyline(points=_scale(p), closed=True, fill=fill, stroke=stroke, width=0.6)
-            for p in elec["polygons"]
-        ]
-
-    return InterfaceLayout(
-        name=name, units="mm", key_by="dsub_pin",
-        background=background, slots=slots,
-    )
+        shapes = [SlotShape.from_polygon(_scale(p)) for p in elec["polygons"]]
+        if not shapes:
+            continue
+        raw_type = str(elec.get("type", "") or "")
+        slots.append(
+            Slot(connector=0, pin=UNSET_PIN,
+                 x=sum(s.x for s in shapes) / len(shapes),
+                 y=sum(s.y for s in shapes) / len(shapes),
+                 label="", pad_class="rf" if raw_type == "RF" else raw_type,
+                 ident=elec["name"], shapes=shapes)
+        )
+    return slots
 
 
 def _read_mapping(csv_path: str | Path) -> list[tuple[str, int, int]]:
@@ -141,8 +158,9 @@ def _dump() -> None:
     layout = generate_iontrap(sys.argv[1], sys.argv[2], name)
     out = ensure_user_layouts_dir() / f"{layout.name}.json"
     layout.save_json(out)
-    n_dec = len(layout.background)
-    print(f"wrote {out} ({len(layout.slots)} nets + {n_dec} decoration polygons)")
+    n_signal = sum(s.is_signal for s in layout.slots)
+    n_other = len(layout.slots) - n_signal
+    print(f"wrote {out} ({n_signal} nets + {n_other} non-signal electrodes)")
 
 
 if __name__ == "__main__":

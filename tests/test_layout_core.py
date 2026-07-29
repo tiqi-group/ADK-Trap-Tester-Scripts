@@ -2,7 +2,7 @@
 
 Run with ``uv run pytest tests/test_layout_core.py``. No hardware and no Qt —
 these check the DSUB-50 geometry, JSON round-trip, the findings->colour mapping
-and the alternate ``key_by`` (drawing the same findings on another interface).
+and the alternate ``pin_space`` (drawing the same findings on another interface).
 """
 
 from __future__ import annotations
@@ -42,6 +42,7 @@ from trap_tester.core.layout import (
     user_layout_options,
     user_layouts_dir,
 )
+from trap_tester.core.layout.addressing import canonical_address, is_synthetic
 from trap_tester.core.layout.interface import InterfaceLayout, Slot, SlotShape
 from trap_tester.core.layout.iontrap import build_iontrap, generate_iontrap
 from trap_tester.core.layout.primitives import Circle, Polyline, primitive_from_dict
@@ -70,7 +71,7 @@ def test_dsub50_has_fifty_slots():
     pins = sorted(s.pin for s in lay.slots)
     assert pins == list(range(1, 51))
     assert {s.connector for s in lay.slots} == {0}
-    assert lay.key_by == "dsub_pin"
+    assert lay.pin_space == "dsub_pin"
 
 
 def test_dsub50_row_geometry():
@@ -119,12 +120,12 @@ def test_build_drawing_colours_match_status():
     assert any(not p.measured for p in drawing.pins)
 
 
-def test_build_drawing_alternate_key_by_fpc():
+def test_build_drawing_alternate_pin_space_fpc():
     # A different interface: one slot keyed by FPC conductor, not DSUB pin.
     res = A.analyse("measure_filter", _four_outcome_df(), A.FilterAnalysisSettings())
     fpc_of_pin1 = next(f.fpc_conductor for f in res.findings if f.dsub_pin == 1)
     lay = InterfaceLayout(
-        name="fpc-test", key_by="fpc_conductor",
+        name="fpc-test", pin_space="fpc_conductor",
         slots=[Slot(connector=0, pin=fpc_of_pin1, x=0.0, y=0.0)],
     )
     drawing = build_drawing(res, lay)
@@ -195,56 +196,79 @@ def test_multi_connector_findings_placed_per_connector():
     assert m2 == {1: "shorted", 2: "ok"}
 
 
-# --- FPC ribbon + channel-as-translation-layer ----------------------------
+# --- FPC ribbon + the canonical address as translation layer ----------------
 
 
-def test_slot_channel_round_trips():
-    s = Slot(connector=1, pin=5, x=0.0, y=0.0, channel=43)
-    assert Slot.from_dict(s.to_dict()).channel == 43
-    # an unmapped slot keeps channel None through the round trip
-    assert Slot.from_dict(Slot(connector=1, pin=1, x=0, y=0).to_dict()).channel is None
+def test_a_v1_layout_is_rejected():
+    """Only schema 2 loads.
+
+    The project has had no release, so there is nothing to stay compatible with, and
+    a loader that speaks exactly one format is the point of the exercise. A v1 file
+    fails with a message pointing at the generator rather than being silently
+    reinterpreted.
+    """
+    v1 = {
+        "name": "old", "units": "mm", "key_by": "dsub_pin", "background": [],
+        "slots": [{"connector": 0, "pin": 1, "x": 0.0, "y": 0.0, "channel": 46}],
+    }
+    with pytest.raises(ValueError, match="Unsupported layout schema"):
+        InterfaceLayout.from_dict(v1)
 
 
-def test_dsub_slots_carry_a_channel():
+def test_slot_round_trips_without_a_channel():
+    """v2 stores no channel; identity is (connector, pin) plus the optional ident."""
+    s = Slot(connector=1, pin=5, x=0.0, y=0.0, ident="B25")
+    back = Slot.from_dict(s.to_dict())
+    assert (back.connector, back.pin, back.ident) == (1, 5, "B25")
+    assert "channel" not in s.to_dict()
+    assert Slot.from_dict(Slot(connector=1, pin=1, x=0, y=0).to_dict()).ident is None
+
+
+def test_canonical_address_of_a_dsub_pin_is_itself():
     lay = generate_dsub50()
-    assert all(s.channel is not None for s in lay.slots)  # every DSUB pin maps
+    assert all(
+        canonical_address(s.connector, s.pin, lay.pin_space) == (s.connector, s.pin)
+        for s in lay.slots
+    )
 
 
-def test_fpc_layout_is_conductor_keyed_and_channelled():
+def test_fpc_layout_is_conductor_keyed_with_gnd_shields():
     lay = fpc_layout()
-    assert lay.key_by == "fpc_conductor"
-    # 51 physical conductors; 1 and 51 are GND shields carrying no channel.
+    assert lay.pin_space == "fpc_conductor"
+    # 51 physical conductors; 1 and 51 are the GND shields, declared as such.
     assert {s.pin for s in lay.slots} == set(range(1, 52))
     by_cond = {s.pin: s for s in lay.slots}
-    assert by_cond[1].channel is None and by_cond[51].channel is None
-    assert sum(s.channel is not None for s in lay.slots) == 49
-    assert all(s.shape == "rect" for s in lay.slots)
+    assert by_cond[1].pad_class == "gnd" and by_cond[51].pad_class == "gnd"
+    assert sum(s.is_signal for s in lay.slots) == 49
+    assert all(sh.shape == "rect" for s in lay.slots for sh in s.shapes)
     assert {s.connector for s in lay.slots} == {0}
 
 
-def test_channel_bridges_dsub_and_fpc_from_json_alone():
-    # The two layouts share a channel identity, so a DSUB pin and the FPC
-    # conductor carrying the same channel agree with the mux mapping — without
-    # any runtime pin<->conductor lookup, purely from the stamped channels.
-    fpc_pin_by_channel = {s.channel: s.pin for s in fpc_layout().slots}
+def test_canonical_address_bridges_dsub_and_fpc():
+    """A DSUB pin and the conductor carrying its signal reduce to one address.
+
+    v1 achieved this by stamping a matching ``channel`` into both JSON files; v2
+    derives it, so the two layouts cannot drift out of agreement.
+    """
     for s in dsub50_layout().slots:
-        expected = fpc_conductor(s.pin)  # via mux_mapping
-        via_json = fpc_pin_by_channel.get(s.channel)
-        assert via_json == expected, f"DSUB pin {s.pin} channel {s.channel}"
-    # the corrected wiring: DSUB pin 42 -> conductor 26; pin 9 is GND -> nothing.
-    ch_of = {s.pin: s.channel for s in dsub50_layout().slots}
-    assert fpc_pin_by_channel.get(ch_of[42]) == 26
+        conductor = fpc_conductor(s.pin)  # via mux_mapping
+        if conductor is None:  # DSUB pin 9 is GND: no conductor
+            continue
+        assert canonical_address(0, conductor, "fpc_conductor") == (0, s.pin)
+    # the corrected wiring: DSUB pin 42 <-> conductor 26
+    assert canonical_address(0, 26, "fpc_conductor") == (0, 42)
     assert fpc_conductor(9) is None
+    # the shield conductors have no canonical address at all
+    assert canonical_address(0, 1, "fpc_conductor") is None
+    assert canonical_address(0, 51, "fpc_conductor") is None
 
 
 def test_fpc_layout_for_connector_generates_and_stamps():
     lay2 = fpc_layout_for_connector(2)
     assert {s.connector for s in lay2.slots} == {2}
     assert len(lay2.slots) == 51
-    # channel identity is connector-independent (same conductor -> same channel)
-    ch1 = {s.pin: s.channel for s in fpc_layout().slots}
-    ch2 = {s.pin: s.channel for s in lay2.slots}
-    assert ch1 == ch2
+    # the conductor numbering is connector-independent
+    assert {s.pin for s in lay2.slots} == {s.pin for s in fpc_layout().slots}
 
 
 # --- custom layout store --------------------------------------------------
@@ -282,7 +306,7 @@ def test_import_validates_copies_and_round_trips(layout_store):
     assert ("mine", str(dest)) in user_layout_options()
 
     loaded = load_layout(dest)
-    assert len(loaded.slots) == 50 and loaded.key_by == "dsub_pin"
+    assert len(loaded.slots) == 50 and loaded.pin_space == "dsub_pin"
 
 
 def test_import_rejects_invalid_file_and_stores_nothing(layout_store):
@@ -297,7 +321,7 @@ def test_import_rejects_invalid_file_and_stores_nothing(layout_store):
 def test_import_mapping_validates_copies_and_lists(layout_store):
     store, src_dir = layout_store
     src = src_dir / "wiring.csv"
-    src.write_text("Interposer,Connector,DSUB_Pin\nB25,4,131\n")
+    src.write_text("connector,pin,interposer\n4,31,B25\n")
 
     dest = import_mapping(src)
     assert dest.parent == store
@@ -392,7 +416,7 @@ def test_env_var_extra_dir_is_searched(layout_store, tmp_path, monkeypatch):
 def test_slotshape_and_multi_shape_slot_round_trip():
     poly = [[0.0, 0.0], [1.0, 0.0], [1.0, 0.5], [0.0, 0.5]]
     s = Slot(
-        connector=2, pin=7, x=0.5, y=0.25, channel=13, label="",
+        connector=2, pin=7, x=0.5, y=0.25, ident="E7", label="",
         shapes=[SlotShape(shape="rect", x=0.5, y=0.25, r=0.3),
                 SlotShape.from_polygon(poly)],
     )
@@ -401,7 +425,7 @@ def test_slotshape_and_multi_shape_slot_round_trip():
     assert back.shapes[0].shape == "rect"
     assert back.shapes[1].shape == "poly"
     assert back.shapes[1].points == poly
-    assert back.channel == 13 and back.label == ""
+    assert back.ident == "E7" and back.label == ""
 
 
 def test_slotshape_from_polygon_centre_and_extent():
@@ -411,12 +435,12 @@ def test_slotshape_from_polygon_centre_and_extent():
     assert sh.r == 1.0  # half the larger span
 
 
-def test_single_shape_slot_is_unchanged():
-    # a slot without an explicit shape list still yields exactly one shape
+def test_single_shape_slot_is_normalised_into_one_shape():
+    """v2 has a single geometry representation: the flat args fold into ``shapes``."""
     s = Slot(connector=0, pin=1, x=0.0, y=0.0, r=0.4, shape="rect")
     shapes = list(s.iter_shapes())
     assert len(shapes) == 1 and shapes[0].shape == "rect" and shapes[0].r == 0.4
-    assert "shapes" not in s.to_dict()  # not written when empty (back-compat)
+    assert len(s.to_dict()["shapes"]) == 1  # always written now
 
 
 def test_multi_shape_slot_expands_to_one_pin_per_shape():
@@ -424,7 +448,7 @@ def test_multi_shape_slot_expands_to_one_pin_per_shape():
     lay = InterfaceLayout(
         name="trap-test",
         slots=[Slot(
-            connector=0, pin=1, x=0.0, y=0.0, channel=99, label="E1",
+            connector=0, pin=1, x=0.0, y=0.0, label="E1",
             shapes=[SlotShape.from_polygon([[0, 0], [1, 0], [1, 1], [0, 1]]),
                     SlotShape.from_polygon([[2, 0], [3, 0], [3, 1], [2, 1]]),
                     SlotShape.from_polygon([[4, 0], [5, 0], [5, 1], [4, 1]])],
@@ -434,7 +458,7 @@ def test_multi_shape_slot_expands_to_one_pin_per_shape():
     assert len(drawing.pins) == 3  # one PinMark per shape
     # every shape carries the one net's identity and the same verdict
     assert {p.status for p in drawing.pins} == {"ok"}
-    assert {(p.connector, p.pin, p.channel) for p in drawing.pins} == {(0, 1, 99)}
+    assert {(p.connector, p.pin) for p in drawing.pins} == {(0, 1)}
     assert all(p.shape == "poly" and p.points for p in drawing.pins)
     # the label is drawn on every shape, so each co-wired member is annotated
     assert [p.label for p in drawing.pins] == ["E1", "E1", "E1"]
@@ -444,12 +468,12 @@ def test_multi_shape_slot_expands_to_one_pin_per_shape():
 
 
 def test_cowired_group_marks_all_shapes_together():
-    # one net (one connector/channel) drawn as three shapes: marking the channel
-    # colours every shape, so clicking any co-wired pad marks the whole net.
+    # one net (one address) drawn as three shapes: marking the address colours
+    # every shape, so clicking any co-wired pad marks the whole net.
     lay = InterfaceLayout(
         name="cowire-test",
         slots=[Slot(
-            connector=0, pin=5, x=0.0, y=0.0, channel=42, label="NET",
+            connector=0, pin=5, x=0.0, y=0.0, label="NET",
             shapes=[SlotShape(shape="rect", x=0.0, y=0.0),
                     SlotShape(shape="rect", x=1.0, y=0.0),
                     SlotShape(shape="rect", x=2.0, y=0.0)],
@@ -462,9 +486,9 @@ def test_cowired_group_marks_all_shapes_together():
     assert len(drawing.pins) == 3
     assert all(p.status == "clear" for p in drawing.pins)
 
-    # a single click on the net's channel marks all three shapes at once
-    ann.cycle(0, 42)  # None -> suspicious
-    ann.cycle(0, 42)  # suspicious -> faulty
+    # a single click on the net's address marks all three shapes at once
+    ann.cycle(0, 5)  # None -> suspicious
+    ann.cycle(0, 5)  # suspicious -> faulty
     drawing = build_annotation_drawing(lay, ann)
     assert [p.status for p in drawing.pins] == ["faulty", "faulty", "faulty"]
 
@@ -510,40 +534,43 @@ def _trap_geometry():
     }
 
 
-def test_iontrap_nets_shapes_and_decoration():
+def test_iontrap_nets_shapes_and_rf_class():
     lay = build_iontrap(
         _trap_geometry(),
         mapping=[("DC_0", 0, 1), ("DC_1", 0, 2), ("GRP", 1, 5)],
         name="testtrap",
     )
-    assert lay.units == "mm" and lay.key_by == "dsub_pin"
+    assert lay.units == "mm" and lay.pin_space == "dsub_pin"
+    assert lay.match_by == "ident" and lay.slug == "testtrap"
+    signal = [s for s in lay.slots if s.is_signal]
     # three nets: two single DC + one co-wired group
-    assert len(lay.slots) == 3
-    by_pin = {(s.connector, s.pin): s for s in lay.slots}
+    assert len(signal) == 3
+    by_pin = {(s.connector, s.pin): s for s in signal}
     assert len(by_pin[(0, 1)].shapes) == 1  # plain electrode -> one shape
     assert len(by_pin[(1, 5)].shapes) == 2  # co-wired group -> union of members
-    assert all(sh.shape == "poly" for s in lay.slots for sh in s.shapes)
+    assert all(sh.shape == "poly" for s in signal for sh in s.shapes)
     # metres -> mm: the 1 mm square spans 1.0 in drawing units
     xmin, xmax, _, _ = by_pin[(0, 1)].shapes[0].extent()
     assert xmax - xmin == pytest.approx(1.0)
-    # channels are unique per net (assigned by the importer, not looked up)
-    channels = [s.channel for s in lay.slots]
-    assert len(set(channels)) == 3
-    # the unmapped RF rail is decoration, not a slot
-    assert len(lay.background) == 1
+    # the unmapped RF rail is a declared slot now, not an anonymous background
+    # polygon: that is what puts it in the legend whatever its shape.
+    rf = [s for s in lay.slots if s.pad_class == "rf"]
+    assert len(rf) == 1 and rf[0].ident == "RF_0"
+    assert is_synthetic(rf[0].connector)  # routes to no tester pin
+    assert lay.background == []
 
 
 def test_iontrap_cowired_group_marks_together():
     lay = build_iontrap(
         _trap_geometry(), mapping=[("GRP", 1, 5)], name="t"
     )
-    grp = lay.slots[0]
+    grp = next(s for s in lay.slots if s.is_signal)
     ann = AnnotationSet()
-    ann.cycle(grp.connector, grp.channel)  # one click on the net
+    ann.cycle(grp.connector, grp.pin)  # one click on the net
     drawing = build_annotation_drawing(lay, ann)
     # both member polygons colour together off the single mark
-    assert len(drawing.pins) == 2
-    assert {p.status for p in drawing.pins} == {"suspicious"}
+    assert len([p for p in drawing.pins if p.pad_class == "signal"]) == 2
+    assert {p.status for p in drawing.pins if p.pad_class == "signal"} == {"suspicious"}
 
 
 def test_iontrap_reads_real_trap_files():
@@ -554,10 +581,16 @@ def test_iontrap_reads_real_trap_files():
     if not (root / "hawk1.json").exists():
         pytest.skip("trap definition files not present")
     lay = generate_iontrap(root / "hawk1.json", root / "mapping_sparrow.csv")
-    assert len(lay.slots) == 193  # all single DC electrodes (hawk1 has no groups)
-    assert sum(len(s.shapes) for s in lay.slots) == 193
-    assert len(lay.background) == 8  # RF rails, unmapped -> decoration
-    # every net carries its electrode name as the cross-interface ident
+    signal = [s for s in lay.slots if s.is_signal]
+    assert len(signal) == 193  # all single DC electrodes (hawk1 has no groups)
+    assert sum(len(s.shapes) for s in signal) == 193
+    # the 8 RF rails the mapping never names are declared slots on synthetic
+    # addresses (v1 buried them in ``background`` as anonymous polygons)
+    unrouted = [s for s in lay.slots if not s.is_signal]
+    assert len(unrouted) == 8
+    assert all(is_synthetic(s.connector) for s in unrouted)
+    assert lay.background == []
+    # every pad carries its electrode name as the cross-interface ident
     assert all(s.ident for s in lay.slots)
 
 
@@ -589,7 +622,8 @@ def test_iontrap_tolerates_connector_column_spelling(tmp_path):
         geom_path = tmp_path / "g.json"
         geom_path.write_text(json.dumps(_trap_geometry()))
         lay = generate_iontrap(geom_path, csv_path, name="t")
-        assert [(s.connector, s.pin) for s in lay.slots] == [(0, 1)]
+        signal = [s for s in lay.slots if s.is_signal]
+        assert [(s.connector, s.pin) for s in signal] == [(0, 1)]
 
 
 def test_colliding_stems_are_disambiguated(layout_store, tmp_path):

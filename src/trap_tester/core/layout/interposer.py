@@ -9,15 +9,15 @@ An interposer land-grid-array fans out to several DSUB connectors. Two local
 
 A pad name is a spreadsheet-style grid coordinate: column letter(s) + row number
 (``N7`` = column N, row 7), which gives the pad its position. Signal pads become
-measurable :class:`Slot` s stamped with their canonical ``channel`` (the
-``mux_mapping`` signal) so the interposer correlates with the DSUB / FPC layouts.
-The non-measured pads — GND, plus optional rf_lines / loopback /
-sensor_heater "decoration" pads — are drawn as fixed-colour background circles that
-never react to measurement data.
+measurable :class:`Slot` s addressed by the ``(connector, pin)`` they route to and
+named by their pad name (their ``ident``, which a cross-interface mapping CSV
+lists). The pads that carry no measurement — GND, plus the optional loopback /
+sensor_heater / axialisation pads — are slots too, declaring their class; they route
+to no tester pin and so get a synthetic placeholder address.
 
 Because the interposer spans several connectors, its :class:`InterfaceLayout` is
 drawn *whole* — every pad keeps its own ``connector`` — and matched/annotated per
-``(connector, pin|channel)``. Run ``python -m trap_tester.core.layout.interposer
+``(connector, pin)``. Run ``python -m trap_tester.core.layout.interposer
 <mapping.csv> <gnd.txt> [decoration.csv]`` to generate the layout JSON into the user
 layout store (it embeds the mapping, so it is never tracked in the repo).
 """
@@ -29,11 +29,14 @@ import re
 import sys
 from pathlib import Path
 
-from trap_tester.core.layout.decoration import decoration_style
-from trap_tester.core.layout.interface import InterfaceLayout, Slot
-from trap_tester.core.layout.primitives import Circle, Text
+from trap_tester.core.layout.interface import (
+    UNSET_PIN,
+    InterfaceLayout,
+    Slot,
+    assign_synthetic_addresses,
+)
+from trap_tester.core.layout.primitives import Text
 from trap_tester.core.layout.store import ensure_user_layouts_dir
-from trap_tester.mux_mapping import dsub_to_signal
 
 PAD_R = 0.42
 _PAD_RE = re.compile(r"^([A-Za-z]+)(\d+)$")
@@ -64,11 +67,13 @@ def build_interposer(
 
     ``mapping`` is ``(pad, connector, pin)`` per *signal* pad — these become the
     measured/annotatable :class:`Slot` s. ``gnd_pads`` and ``decoration``
-    (``(pad, type)`` for rf_lines / loopback / sensor_heater) are non-measured
-    pads drawn as fixed-colour background circles — "decoration" that never reacts to
-    measurement data. A decoration pad that is also a signal pad stays a signal slot
-    (its type is ignored). Positions come from the pad grid coordinate; row 1 is
-    drawn at the top.
+    (``(pad, type)`` for rf / loopback / sensor_heater) are real pads that carry no
+    measurement, so they are slots too, declaring their class rather than being
+    hand-coloured background circles as in v1: that is what puts them in the legend
+    whatever their shape. They route to no tester pin, so they get a synthetic
+    address. A decoration pad that is also a signal pad stays a signal slot (its type
+    is ignored). Positions come from the pad grid coordinate; row 1 is drawn at the
+    top.
     """
     signal_names = {p for (p, _c, _pin) in mapping}
     parsed_signal = [(_parse_pad(p), int(c), int(pin)) for (p, c, pin) in mapping]
@@ -90,21 +95,21 @@ def build_interposer(
 
     slots = [
         Slot(connector=c, pin=pin, x=_x(letters), y=_y(row), r=PAD_R,
-             shape="circle", channel=dsub_to_signal.get(pin), label="",
+             shape="circle", label="",
              ident=f"{letters}{row}")  # the LGA pad name, the interposer's mapping key
         for (letters, row), c, pin in parsed_signal
     ]
-    circles = [
-        Circle(x=_x(letters), y=_y(row), r=PAD_R, width=0.8,
-               fill=decoration_style(t)[0], stroke=decoration_style(t)[1])
+    slots += [
+        Slot(connector=0, pin=UNSET_PIN, x=_x(letters), y=_y(row), r=PAD_R,
+             shape="circle", label="", pad_class=t, ident=f"{letters}{row}")
         for (letters, row), t in parsed_decoration
     ]
+    assign_synthetic_addresses(slots)
 
     coords = [rc[0] for rc in parsed_signal] + [rc[0] for rc in parsed_decoration]
-    background = [*circles, *_grid_labels(coords, n_rows)]
     return InterfaceLayout(
-        name=name, units="grid", key_by="dsub_pin",
-        background=background, slots=slots,
+        name=name, slug="interposer", units="grid", pin_space="dsub_pin",
+        match_by="ident", background=_grid_labels(coords, n_rows), slots=slots,
     )
 
 
@@ -116,11 +121,11 @@ def _grid_labels(coords: list[tuple[str, int]], n_rows: int) -> list[Text]:
     y_top = float(n_rows - min(used_rows)) if used_rows else 0.0
 
     labels: list[Text] = []
-    labels.extend(Text(x=float(c), y=y_top + 1.0, text=letters, size=7,
-                       color="#8a8a8a", ha="center", va="bottom")
+    labels.extend(Text(x=float(c), y=y_top + 1.0, text=letters,
+                       ha="center", va="bottom", style="grid_label")
                   for c, letters in cols.items())
     labels.extend(Text(x=float(x_min) - 1.0, y=float(n_rows - row), text=str(row),
-                       size=7, color="#8a8a8a", ha="right", va="center")
+                       ha="right", va="center", style="grid_label")
                   for row in used_rows)
     return labels
 
@@ -132,8 +137,9 @@ def generate_interposer(
 ) -> InterfaceLayout:
     """Read the mapping CSV + GND list (+ optional decoration CSV) and build the layout.
 
-    ``decoration_path`` is a ``LGA pad,type`` CSV (types: rf_lines / loopback /
-    sensor_heater). If absent, only signal + GND pads are drawn.
+    ``decoration_path`` is a ``LGA pad,type`` CSV whose type is a pad class (see
+    :data:`~trap_tester.core.layout.style.PAD_CLASSES`: loopback / sensor_heater /
+    axialisation / rf). If absent, only signal + GND pads are drawn.
     """
     with Path(csv_path).open(newline="") as fh:
         mapping: list[tuple[str, int, int]] = [
@@ -159,8 +165,9 @@ def _dump() -> None:
     layout = generate_interposer(sys.argv[1], sys.argv[2], decoration_path)
     out = ensure_user_layouts_dir() / "interposer.json"
     layout.save_json(out)
-    n_decoration = sum(isinstance(p, Circle) for p in layout.background)
-    print(f"wrote {out} ({len(layout.slots)} signal + {n_decoration} decoration pads)")
+    n_signal = sum(s.is_signal for s in layout.slots)
+    n_other = len(layout.slots) - n_signal
+    print(f"wrote {out} ({n_signal} signal + {n_other} non-signal pads)")
 
 
 if __name__ == "__main__":

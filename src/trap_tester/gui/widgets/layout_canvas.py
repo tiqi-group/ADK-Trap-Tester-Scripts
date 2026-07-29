@@ -29,8 +29,8 @@ from PySide6.QtWidgets import (
 )
 
 from trap_tester.core.layout import Circle, Drawing, Line, Polyline, Rect, Text
-from trap_tester.core.layout.decoration import DECORATION_INFO
 from trap_tester.core.layout.geometry import in_rot_rect, point_in_poly
+from trap_tester.core.layout.style import pad_legend
 from trap_tester.gui import theme
 
 if TYPE_CHECKING:
@@ -290,15 +290,14 @@ class LayoutCanvas(QWidget):
         return []
 
     def _decoration_legend(self, drawing: Drawing) -> list[LegendItem]:
-        """Legend entries for the fixed-colour decoration pads in the background.
+        """Legend entries for the non-signal pad classes this drawing contains.
 
-        Decoration pads (GND / RF lines / …) are static background circles, so we
-        recover which classes are present by matching their fill colour against
-        :data:`DECORATION_INFO`. Shared by every layout view so all tabs agree.
+        Driven by what each pad *declares* (``PinMark.pad_class``), so it works for
+        circles, rectangles and polygons alike. v1 recovered the class by matching a
+        background circle's fill colour, which meant ion-trap RF rails — polygons —
+        could never appear here. Shared by every layout view so all tabs agree.
         """
-        fills = {p.fill for p in drawing.background if isinstance(p, Circle)}
-        return [(label, fill, stroke)
-                for label, fill, stroke in DECORATION_INFO.values() if fill in fills]
+        return pad_legend(drawing.pad_classes())
 
     def _render_legend(self, items: list[LegendItem]) -> None:
         """Rebuild the Qt legend strip beside the canvas from ``items``."""

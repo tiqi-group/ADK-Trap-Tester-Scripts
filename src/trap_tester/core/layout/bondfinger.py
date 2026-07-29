@@ -8,10 +8,12 @@ A chip carrier fans out to a ring of bond fingers around the die. Two local
 * a mapping CSV — ``Bondfinger, DSUB Connector, DSUB-Pin``: the (0-indexed) DSUB
   connector + pin each finger routes to.
 
-Each finger becomes a small square :class:`Slot` at its PCB position, stamped
-with its canonical ``channel`` (the ``mux_mapping`` signal) so it correlates with
-the DSUB / FPC / interposer layouts. The squares are sized below the finger pitch
-so they never overlap. PCB y grows downward, so y is negated to draw a top view.
+Each finger becomes a small square :class:`Slot` at its PCB position, addressed by
+the ``(connector, pin)`` it routes to and named by its finger number (its ``ident``,
+which is what a cross-interface mapping CSV lists). A finger the mapping does not
+route gets a synthetic placeholder address instead of a colliding one. The squares
+are sized below the finger pitch so they never overlap. PCB y grows downward, so y
+is negated to draw a top view.
 Run ``python -m trap_tester.core.layout.bondfinger <coords.json> <mapping.csv>``
 to generate the layout JSON into the user layout store (it embeds the mapping, so
 it is never tracked).
@@ -24,15 +26,18 @@ import json
 import sys
 from pathlib import Path
 
-from trap_tester.core.layout.interface import InterfaceLayout, Slot
+from trap_tester.core.layout.interface import (
+    UNSET_PIN,
+    InterfaceLayout,
+    Slot,
+    assign_synthetic_addresses,
+)
 from trap_tester.core.layout.store import ensure_user_layouts_dir
-from trap_tester.mux_mapping import dsub_to_signal
 
 NAME = "Bondfinger"
 # half-side of a finger's square pad (mm). Fingers sit close together, so keep
 # this small enough to leave a gap between adjacent squares.
 FINGER_R = 0.09
-_NO_CONNECTOR = -1  # a finger that routes nowhere
 
 
 def build_bondfinger(
@@ -44,21 +49,22 @@ def build_bondfinger(
 
     ``positions`` is ``{finger: (x, y, rot)}`` (mm, PCB orientation);
     ``mapping`` is ``{finger: (connector, pin)}``. Every finger is drawn; those
-    absent from ``mapping`` route nowhere (no channel, faint).
+    absent from ``mapping`` route nowhere and are given a synthetic address.
     """
     slots: list[Slot] = []
     for finger in sorted(positions):
         x, y, _rot = positions[finger]  # rotation unused: squares need no orientation
         cp = mapping.get(finger)
-        connector, pin = cp if cp is not None else (_NO_CONNECTOR, finger)
-        channel = dsub_to_signal.get(pin) if cp is not None else None
+        connector, pin = cp if cp is not None else (0, UNSET_PIN)
         slots.append(Slot(
             connector=connector, pin=pin, x=float(x), y=-float(y),  # PCB y is down
-            r=FINGER_R, shape="rect", channel=channel, label="",
+            r=FINGER_R, shape="rect", label="",
             ident=str(finger),  # the bond-finger number, this layout's mapping key
         ))
+    assign_synthetic_addresses(slots)
     return InterfaceLayout(
-        name=name, units="mm", key_by="dsub_pin", background=[], slots=slots,
+        name=name, slug="bondfinger", units="mm", pin_space="dsub_pin",
+        match_by="ident", background=[], slots=slots,
     )
 
 

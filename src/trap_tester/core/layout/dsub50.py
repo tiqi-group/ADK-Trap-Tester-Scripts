@@ -20,7 +20,6 @@ from pathlib import Path
 
 from trap_tester.core.layout.interface import InterfaceLayout, Slot
 from trap_tester.core.layout.primitives import Polyline, Text
-from trap_tester.mux_mapping import dsub_to_signal
 
 # --- geometry (arbitrary mm-like units; only the proportions matter) ---------
 PITCH = 1.0          # horizontal spacing between adjacent pins in a row
@@ -44,7 +43,7 @@ def generate_dsub50(connector: int = 0, front_view: bool = True) -> InterfaceLay
             slots.append(
                 Slot(
                     connector=connector, pin=pin, x=(j + x_off) * PITCH, y=y,
-                    r=PIN_R, channel=dsub_to_signal.get(pin),
+                    r=PIN_R,
                 )
             )
 
@@ -61,18 +60,18 @@ def generate_dsub50(connector: int = 0, front_view: bool = True) -> InterfaceLay
         [x_lo, y_lo],          # bottom-left
     ]
     shell = Polyline(
-        points=_round_corners(corners, radius=0.9),
-        closed=True, stroke="#8a8a8a", width=2.0, fill="#fbfbfb",
+        points=_round_corners(corners, radius=0.9), closed=True, style="outline",
     )
     caption = Text(
         x=_X_MAX / 2, y=y_hi + 0.5, text=f"DSUB-50 · connector {connector} · front view",
-        size=9, color="#8a8a8a", va="bottom",
+        va="bottom", style="caption",
     )
     background = [shell, caption]
 
     layout = InterfaceLayout(
-        name=f"DSUB-50 (connector {connector})",
-        units="mm", key_by="dsub_pin", background=background, slots=slots,
+        name=f"DSUB-50 (connector {connector})", slug="dsub50",
+        units="mm", pin_space="dsub_pin", match_by="connector_pin",
+        background=background, slots=slots,
     )
     if not front_view:
         _mirror_x(layout)
@@ -114,6 +113,7 @@ def _round_corners(
 def _mirror_x(layout: InterfaceLayout) -> None:
     """Mirror horizontally in place (front view <-> solder side)."""
     for s in layout.slots:
+        s.shapes = [sh.mirrored_x(_X_MAX) for sh in s.shapes]
         s.x = _X_MAX - s.x
     for prim in layout.background:
         if isinstance(prim, Polyline):

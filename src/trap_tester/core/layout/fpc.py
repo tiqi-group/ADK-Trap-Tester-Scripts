@@ -7,12 +7,13 @@ as shielding (they carry no channel), so the 49 channel-carrying conductors are
 ``layouts/fpc.json`` (run ``python -m trap_tester.core.layout.fpc``), which then
 becomes the editable source of truth loaded at runtime.
 
-Each channel-carrying contact is stamped with its canonical ``channel`` (the
-``mux_mapping`` signal number) so this JSON and ``dsub50.json`` share a channel
-identity: a mark on a DSUB pin re-projects onto the FPC conductor carrying the
-*same* channel, straight from the two JSON files. The GND conductors carry no
-channel (``None``); they are still drawn (and labelled) so the whole ribbon is
-visible.
+A contact's ``pin`` is its ribbon conductor, so this layout's pin space is
+``fpc_conductor`` rather than ``dsub_pin``. Correlating a mark between the ribbon
+and the DSUB connector is the job of
+:func:`~trap_tester.core.layout.addressing.canonical_address`, which reduces a
+conductor to the DSUB pin carrying the same signal — no stored channel needed. The
+two shield conductors are ``class="gnd"``: drawn and labelled so the whole ribbon
+is visible, but inert.
 """
 
 from __future__ import annotations
@@ -21,19 +22,13 @@ from pathlib import Path
 
 from trap_tester.core.layout.interface import InterfaceLayout, Slot
 from trap_tester.core.layout.primitives import Rect, Text
-from trap_tester.mux_mapping import FPC_GND_CONDUCTORS, FPC_N_CONDUCTORS, signal_to_fpc
+from trap_tester.mux_mapping import FPC_GND_CONDUCTORS, FPC_N_CONDUCTORS
 
 # --- geometry (arbitrary mm-like units; only the proportions matter) ---------
 PITCH = 1.0          # spacing between adjacent contacts
 CONTACT_R = 0.4      # half-size of a (square) contact
 _MARGIN_X = 0.8
 _MARGIN_Y = 0.8
-
-# conductor -> canonical channel (signal). Inverse of the mux mapping; used only
-# at generation time so the number lands in the JSON. GND conductors are absent
-# here, so ``.get`` yields ``None`` for them.
-_FPC_TO_SIGNAL = {conductor: signal for signal, conductor in signal_to_fpc.items()}
-
 
 def fpc_conductors() -> list[int]:
     """Every FPC conductor, in ribbon order (1..51, GND shields included)."""
@@ -46,7 +41,8 @@ def generate_fpc(connector: int = 0) -> InterfaceLayout:
     slots = [
         Slot(
             connector=connector, pin=conductor, x=j * PITCH, y=0.0,
-            r=CONTACT_R, shape="rect", channel=_FPC_TO_SIGNAL.get(conductor),
+            r=CONTACT_R, shape="rect",
+            pad_class="gnd" if conductor in FPC_GND_CONDUCTORS else "signal",
         )
         for j, conductor in enumerate(conductors)
     ]
@@ -55,7 +51,7 @@ def generate_fpc(connector: int = 0) -> InterfaceLayout:
     body = Rect(
         x=x_max / 2, y=0.0,
         w=x_max + 2 * _MARGIN_X, h=2 * CONTACT_R + 2 * _MARGIN_Y,
-        stroke="#8a8a8a", width=2.0, fill="#fbfbfb",
+        style="outline",
     )
     caption = Text(
         x=0.0, y=CONTACT_R + _MARGIN_Y + 0.35,
@@ -63,20 +59,20 @@ def generate_fpc(connector: int = 0) -> InterfaceLayout:
             f"FPC ribbon · connector {connector} · {len(conductors)} conductors "
             f"(1 & 51 = GND shield)"
         ),
-        size=9, color="#8a8a8a", ha="left", va="bottom",
+        ha="left", va="bottom", style="caption",
     )
     # Label the GND shields so they read as shielding, not unmeasured channels.
     gnd_labels = [
         Text(
             x=(conductors.index(c)) * PITCH, y=-(CONTACT_R + 0.3),
-            text="GND", size=6, color="#8a8a8a", ha="center", va="top",
+            text="GND", ha="center", va="top", style="grid_label",
         )
         for c in FPC_GND_CONDUCTORS
         if c in conductors
     ]
     return InterfaceLayout(
-        name=f"FPC ribbon (connector {connector})",
-        units="mm", key_by="fpc_conductor",
+        name=f"FPC ribbon (connector {connector})", slug="fpc",
+        units="mm", pin_space="fpc_conductor", match_by="connector_pin",
         background=[body, caption, *gnd_labels], slots=slots,
     )
 

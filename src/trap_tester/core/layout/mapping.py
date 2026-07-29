@@ -1,68 +1,87 @@
 """Setup-specific cross-interface wiring maps.
 
-Every layout bakes in an *inherent* wiring — each :class:`~trap_tester.core.layout
-.interface.Slot` carries a fixed ``(connector, pin)`` and a ``channel`` (mux
-signal), and interfaces correlate by shared ``(connector, channel)``. But the
-trap-tester's interfaces (DSUB-50, interposer, bond-finger ring, ion-trap
-electrodes …) are joined by cables, adapter PCBs and vacuum feedthroughs that a
-real setup wires differently. A **mapping** is a per-setup CSV that declares, net
-by net, how the interfaces actually interconnect — overriding the inherent wiring.
+Every layout bakes in a *nominal* wiring — each
+:class:`~trap_tester.core.layout.interface.Slot` carries a ``(connector, pin)``,
+the apparatus' own electrical address. But the trap-tester's interfaces (DSUB-50,
+interposer, bond-finger ring, ion-trap electrodes …) are joined by cables, adapter
+PCBs and vacuum feedthroughs that a real setup wires differently. A **mapping** is
+a per-setup CSV that declares, net by net, how the interfaces actually
+interconnect — overriding the nominal wiring.
 
-CSV shape: one column per interface (its header is that layout's *display name*)
-plus a **connector** column and a **DSUB-pin** column — the trap-tester's main
-interface, which is always required. Each row is one net::
+CSV shape (schema v2): a required ``connector`` and ``pin`` column, plus one column
+per interface whose header is that layout's **slug**. Each row is one net::
 
-    hawk3,Bondfinger,LGA_Pad,N Connecgor,DSUB_Pin
-    COMP_0_0,287,B25,4,31
+    connector,pin,hawk3,bondfinger,interposer
+    4,31,COMP_0_0,287,B25
 
-Here the net named ``COMP_0_0`` on the ``hawk3`` interface, ``287`` on
-``Bondfinger`` and ``B25`` on ``LGA_Pad`` is measured at tester connector 4, pin
-31. A cell may be blank — then that net has no identifier on that interface.
+The net measured at tester connector 4, pin 31 is called ``COMP_0_0`` on the
+``hawk3`` interface, ``287`` on ``bondfinger`` and ``B25`` on ``interposer``. A cell
+may be blank — then that net has no identifier on that interface. Several idents
+for one net on one interface are separated by ``;`` (never a comma: commas are not
+permitted inside an ident, and the loader enforces it).
 
-:func:`apply_to` re-stamps a layout's slots for a mapping so that both tabs work
-unchanged: it matches a **named** layout's slots by their per-interface ``ident``
-(the LGA pad / finger / electrode name) and a **reference** layout (DSUB-50, or
-any interface the CSV never names) by ``(connector, pin)``, giving every slot of a
-net the same ``channel`` (the net's id). Analysis then colours the right slot and
-annotations re-project along the setup's real wiring. Slots with no matching net
-keep their inherent wiring — the "interface not mentioned → infer from the
-standard mapping" fallback.
+:func:`apply_to` re-stamps a layout's slots for a mapping. Which join is used is
+*declared* by the layout, not guessed:
+
+* ``match_by == "ident"`` — match slots by their ``ident`` against the column named
+  by the layout's ``slug``;
+* ``match_by == "connector_pin"`` — the tester's reference interfaces (DSUB-50 /
+  FPC), matched on the address itself.
+
+Slots matching no net keep their nominal wiring. :func:`coverage_report` says
+exactly which idents matched and which did not, on both sides.
 """
 
 from __future__ import annotations
 
 import csv
-from dataclasses import dataclass, replace
+import re
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING
+
+from trap_tester.core.layout.addressing import PINS_PER_CONNECTOR
 
 if TYPE_CHECKING:
     from trap_tester.core.layout.interface import InterfaceLayout
 
-# Header spellings that designate the trap-tester's main-interface columns (the
-# only required ones). Every other column is named after a layout and holds that
-# interface's per-net identifier. Spelling is tolerated the same way the ion-trap
-# importer tolerates its connector column (incl. the source data's "N Connecgor").
-_CONNECTOR_KEYS = (
-    "N Connecgor", "N Connector", "Connector", "Connector_Num",
-    "Connector number", "n_conn",
-)
-_PIN_KEYS = ("DSUB_Pin", "DSUB-Pin", "Pin", "dsub_pin")
+# The two reserved column headers. There is deliberately no tolerance list of
+# alternative spellings: headers are normalised (case, spaces, separators) and
+# anything else is an error naming the fix, so odd spellings get corrected in the
+# data once instead of accumulating in the parser forever.
+CONNECTOR_HEADER = "connector"
+PIN_HEADERS = ("pin", "dsub_pin")
+IDENT_SEPARATOR = ";"
 
-# The DSUB pin is recorded with a hundreds digit that encodes the connector bank
-# (e.g. 126 on connector 7 -> physical pin 26); the trap tester's DSUB-50 has only
-# 50 pins, so the actual pin is the value modulo 100.
-_PIN_MODULO = 100
+_HEADER_HINT = (
+    f"the reserved headers are {CONNECTOR_HEADER!r} and one of {PIN_HEADERS}; "
+    "every other column is a layout slug"
+)
+
+
+def normalize_header(header: str) -> str:
+    """Canonical form of a CSV header: casefolded, separators collapsed to ``_``."""
+    return re.sub(r"_+", "_", re.sub(r"[^a-z0-9]+", "_", header.casefold())).strip("_")
+
+
+def normalize_ident(ident: str) -> str:
+    """An ident as matched: surrounding whitespace stripped, nothing else.
+
+    Deliberately no case-folding and no numeric normalisation — see
+    :func:`coverage_report`, which reports near-misses rather than silently
+    accepting them.
+    """
+    return ident.strip()
 
 
 @dataclass
 class Net:
-    """One electrical net: a tester pin plus its name on each named interface."""
+    """One electrical net: a tester address plus its name on each named interface."""
 
     connector: int
     pin: int
-    idents: dict[str, str]  # interface name -> this net's identifier there
-    net_id: int  # stable per-mapping id; used as the shared correlation channel
+    idents: dict[str, list[str]]  # interface slug -> this net's identifier(s) there
+    row: int  # source row index, for diagnostics
 
 
 @dataclass
@@ -77,8 +96,7 @@ class Mapping:
         """``ident -> net`` for one named interface (blank cells skipped)."""
         out: dict[str, Net] = {}
         for net in self.nets:
-            ident = net.idents.get(interface)
-            if ident:
+            for ident in net.idents.get(interface, ()):
                 out[ident] = net
         return out
 
@@ -87,92 +105,171 @@ class Mapping:
         return {(n.connector, n.pin): n for n in self.nets}
 
 
-def _find_key(
-    fields: list[str], candidates: tuple[str, ...], path: Path, what: str
-) -> str:
-    key = next((k for k in candidates if k in fields), None)
-    if key is None:
-        raise ValueError(f"{path}: no {what} column (looked for {candidates})")
-    return key
-
-
 def load_csv(path: str | Path) -> Mapping:
     """Parse a mapping CSV into a :class:`Mapping`.
 
-    The connector and DSUB-pin columns are detected by tolerant header spelling;
-    every other column is a named interface. Rows without a tester pin are skipped
-    (a net with no ``(connector, pin)`` cannot be placed), but ``net_id`` still
-    tracks the source row so the mapping is deterministic.
+    Raises with an actionable message when the headers are not canonical or a pin is
+    outside the tester's range — both are legacy-data problems the migration fixes,
+    not things to paper over here.
     """
     path = Path(path)
     with path.open(newline="") as fh:
         reader = csv.DictReader(fh)
-        fields = list(reader.fieldnames or [])
-        conn_key = _find_key(fields, _CONNECTOR_KEYS, path, "connector")
-        pin_key = _find_key(fields, _PIN_KEYS, path, "DSUB pin")
-        interfaces = [f for f in fields if f not in (conn_key, pin_key)]
+        raw_fields = list(reader.fieldnames or [])
+        headers = {f: normalize_header(f) for f in raw_fields}
+        conn_key, pin_key = _reserved_keys(path, headers)
+        ident_fields = [f for f in raw_fields if f not in (conn_key, pin_key)]
+
         nets: list[Net] = []
         for i, row in enumerate(reader):
             conn_raw = (row.get(conn_key) or "").strip()
             pin_raw = (row.get(pin_key) or "").strip()
             if not conn_raw or not pin_raw:
-                continue
-            idents = {
-                iface: val
-                for iface in interfaces
-                if (val := (row.get(iface) or "").strip())
-            }
-            nets.append(
-                Net(connector=int(conn_raw), pin=int(pin_raw) % _PIN_MODULO,
-                    idents=idents, net_id=i)
+                continue  # a net with no tester address cannot be placed
+            nets.append(Net(
+                connector=int(conn_raw),
+                pin=_checked_pin(path, i, pin_raw),
+                idents=_row_idents(path, i, row, ident_fields, headers),
+                row=i,
+            ))
+    return Mapping(
+        name=path.stem, interfaces=[headers[f] for f in ident_fields], nets=nets
+    )
+
+
+def _reserved_keys(path: Path, headers: dict[str, str]) -> tuple[str, str]:
+    """The raw header names of the ``connector`` and ``pin`` columns."""
+    conn_key = next((f for f, n in headers.items() if n == CONNECTOR_HEADER), None)
+    pin_key = next((f for f, n in headers.items() if n in PIN_HEADERS), None)
+    if conn_key is None or pin_key is None:
+        missing = "connector" if conn_key is None else "pin"
+        raise ValueError(
+            f"{path}: no '{missing}' column — found {sorted(headers.values())}. "
+            f"Note {_HEADER_HINT}."
+        )
+    return conn_key, pin_key
+
+
+def _checked_pin(path: Path, index: int, pin_raw: str) -> int:
+    """A physical DSUB pin, rejecting the legacy bank-encoded form."""
+    pin = int(pin_raw)
+    if not 1 <= pin <= PINS_PER_CONNECTOR:
+        raise ValueError(
+            f"{path} row {index + 2}: pin {pin} is outside 1..{PINS_PER_CONNECTOR}. "
+            "A pin is the physical DSUB pin; older exports encoded the connector "
+            "bank in a hundreds digit, which must be stripped in the CSV."
+        )
+    return pin
+
+
+def _row_idents(
+    path: Path,
+    index: int,
+    row: dict[str, str | None],
+    ident_fields: list[str],
+    headers: dict[str, str],
+) -> dict[str, list[str]]:
+    """``slug -> idents`` for one row, splitting multi-ident cells."""
+    idents: dict[str, list[str]] = {}
+    for field_name in ident_fields:
+        cell = (row.get(field_name) or "").strip()
+        if not cell:
+            continue
+        if "," in cell:
+            raise ValueError(
+                f"{path} row {index + 2}: ident {cell!r} contains a comma; "
+                f"use {IDENT_SEPARATOR!r} to separate several idents."
             )
-    return Mapping(name=path.stem, interfaces=interfaces, nets=nets)
+        parts = [normalize_ident(p) for p in cell.split(IDENT_SEPARATOR)]
+        idents[headers[field_name]] = [p for p in parts if p]
+    return idents
 
 
-def _ident_column(layout: InterfaceLayout, mapping: Mapping) -> str | None:
-    """The mapping column this layout's slots are identified by, or ``None``.
+# ---------------------------------------------------------------------------
+# Applying a mapping
+# ---------------------------------------------------------------------------
+def _column_for(layout: InterfaceLayout, mapping: Mapping) -> str | None:
+    """The mapping column this layout is identified by, or ``None``.
 
-    Prefer an exact column named after the layout (``layout.name``). Otherwise fall
-    back to the column whose identifiers overlap the layout's slot ``ident`` s the
-    most — so a layout whose *display* name differs from its CSV column (e.g. an
-    interposer named "Interposer" whose pads live in an "LGA_Pad" column) is still
-    re-wired by identity rather than by its inherent, possibly-deviating pins.
-    ``None`` when nothing matches — the reference interface (DSUB-50) whose slots
-    carry no ``ident`` and are matched by ``(connector, pin)`` instead.
+    Just the layout's declared ``slug``. v1 fell back to "the column whose idents
+    overlap the most", which was needed only because columns were headed with
+    display names; the slug makes that guess unnecessary.
     """
-    if layout.name in mapping.interfaces:
-        return layout.name
-    slot_idents = {s.ident for s in layout.slots if s.ident}
-    if not slot_idents:
-        return None
-    best, best_overlap = None, 0
-    for iface in mapping.interfaces:
-        overlap = len(slot_idents & set(mapping.idents_for(iface)))
-        if overlap > best_overlap:
-            best, best_overlap = iface, overlap
-    return best
+    return layout.slug if layout.slug in mapping.interfaces else None
 
 
-def _match_mode(layout: InterfaceLayout, mapping: Mapping) -> tuple[str, str | None]:
-    """How ``mapping`` applies to ``layout``.
+@dataclass
+class CoverageReport:
+    """What a mapping does and does not say about one layout."""
 
-    * ``("ident", column)`` — the layout is one of the mapping's interfaces (by name
-      or best ``ident`` overlap); match slots by ``ident``.
-    * ``("reference", None)`` — the tester reference interface (DSUB-50: no ``ident``
-      s, ``key_by == "dsub_pin"``); match slots by ``(connector, pin)``.
-    * ``("none", None)`` — the mapping does not describe this layout at all. Notably
-      an ident-bearing custom layout the mapping never names is NOT reference-matched
-      — its ``(connector, pin)`` live in a different family, so any numeric overlap
-      would be coincidental and wrong (a hawk1 layout under a hawk3 mapping). The GUI
-      warns and the layout keeps its inherent wiring.
+    mode: str  # "ident" | "connector_pin" | "none"
+    column: str | None
+    matched: list[str] = field(default_factory=list)
+    layout_only: list[str] = field(default_factory=list)  # in the layout, not the CSV
+    csv_only: list[str] = field(default_factory=list)  # in the CSV, not the layout
+    case_mismatches: list[tuple[str, str]] = field(default_factory=list)
+
+    @property
+    def count(self) -> int:
+        return len(self.matched)
+
+    def summary(self) -> str:
+        """One-line human summary, naming the near-misses worth fixing."""
+        if self.mode == "none":
+            return "this mapping does not describe this interface"
+        if self.mode == "connector_pin":
+            return f"{self.count} slot(s) matched by (connector, pin)"
+        parts = [f"{self.count} matched"]
+        if self.layout_only:
+            parts.append(f"{len(self.layout_only)} only in the layout")
+        if self.csv_only:
+            parts.append(f"{len(self.csv_only)} only in the CSV")
+        if self.case_mismatches:
+            parts.append(f"{len(self.case_mismatches)} matched only ignoring case")
+        return ", ".join(parts)
+
+
+def coverage_report(layout: InterfaceLayout, mapping: Mapping) -> CoverageReport:
+    """Diff a layout's idents against the mapping column that names them.
+
+    Case is honoured when matching; an ident that matches only case-insensitively is
+    still applied but reported in ``case_mismatches``, so the join is not blocked and
+    the offending cell can be corrected. No numeric normalisation is attempted —
+    ``N04`` and ``N4`` stay distinct, because a rule clever enough to equate them
+    would eventually mangle a structured electrode name.
     """
-    column = _ident_column(layout, mapping)
-    if column is not None:
-        return "ident", column
-    has_idents = any(s.ident for s in layout.slots)
-    if not has_idents and layout.key_by == "dsub_pin":
-        return "reference", None
-    return "none", None
+    if layout.match_by == "connector_pin":
+        cp = mapping.by_connector_pin()
+        matched = [
+            f"{s.connector}:{s.pin}" for s in layout.slots
+            if (s.connector, s.pin) in cp
+        ]
+        return CoverageReport(mode="connector_pin", column=None, matched=matched)
+
+    column = _column_for(layout, mapping)
+    if column is None:
+        return CoverageReport(mode="none", column=None)
+
+    csv_idents = mapping.idents_for(column)
+    csv_folded = {i.casefold(): i for i in csv_idents}
+    slot_idents = [s.ident for s in layout.slots if s.ident]
+
+    report = CoverageReport(mode="ident", column=column)
+    seen: set[str] = set()
+    for ident in slot_idents:
+        if ident in csv_idents:
+            report.matched.append(ident)
+            seen.add(ident)
+            continue
+        alt = csv_folded.get(ident.casefold())
+        if alt is not None:
+            report.matched.append(ident)
+            report.case_mismatches.append((ident, alt))
+            seen.add(alt)
+            continue
+        report.layout_only.append(ident)
+    report.csv_only = sorted(set(csv_idents) - seen)
+    return report
 
 
 def coverage(layout: InterfaceLayout, mapping: Mapping) -> int:
@@ -180,51 +277,54 @@ def coverage(layout: InterfaceLayout, mapping: Mapping) -> int:
 
     Zero means the mapping does not touch this layout at all — it can neither be
     propagated *to* nor *from* it — so a GUI should warn rather than silently show
-    the inherent wiring. Uses the same match choice as :func:`apply_to`.
+    the nominal wiring. See :func:`coverage_report` for the detail behind the count.
     """
-    mode, column = _match_mode(layout, mapping)
-    if mode == "ident":
-        ident_map = mapping.idents_for(column)  # type: ignore[arg-type]
-        return sum(1 for s in layout.slots if s.ident and s.ident in ident_map)
-    if mode == "reference":
-        cp_map = mapping.by_connector_pin()
-        return sum(1 for s in layout.slots if (s.connector, s.pin) in cp_map)
-    return 0
+    return coverage_report(layout, mapping).count
 
 
 def apply_to(layout: InterfaceLayout, mapping: Mapping) -> InterfaceLayout:
     """Return a copy of ``layout`` re-wired for ``mapping`` (never mutates input).
 
-    A layout identified by a CSV column (by name, else by best ``ident`` overlap —
-    see :func:`_ident_column`) is matched slot-by-slot on its ``ident`` and
-    re-stamped with the net's ``(connector, pin)`` and id-as-``channel``. This is
-    what makes deviating wiring — a cable/adapter that routes a pad to a different
-    tester pin than its inherent one — show up correctly. The tester reference
-    interface (DSUB-50) is matched by ``(connector, pin)`` and only re-channelled,
-    so it shares the net-id channel space and correlates with the named layouts. A
-    layout the mapping does not describe (see :func:`_match_mode`) is returned
-    unchanged. Slots that match no net keep their inherent wiring.
+    A layout that declares ``match_by == "ident"`` and whose ``slug`` names a column
+    is matched slot-by-slot on its ``ident`` and re-stamped with the net's
+    ``(connector, pin)``. This is what makes deviating wiring — a cable or adapter
+    that routes a pad to a different tester pin than its nominal one — show up
+    correctly, and it is what gives a geometry-only import (whose nominal address is
+    a synthetic placeholder) its real address. A reference layout is matched on
+    ``(connector, pin)``, which is already the net's address, so it is returned
+    unchanged. A layout the mapping does not describe is returned unchanged.
     """
-    mode, column = _match_mode(layout, mapping)
-    if mode == "ident":
-        ident_map = mapping.idents_for(column)  # type: ignore[arg-type]
-        new_slots = [
-            replace(s, connector=n.connector, pin=n.pin, channel=n.net_id)
-            if s.ident is not None and (n := ident_map.get(s.ident)) is not None
-            else s
-            for s in layout.slots
-        ]
-    elif mode == "reference":
-        cp_map = mapping.by_connector_pin()
-        new_slots = [
-            replace(s, channel=n.net_id)
-            if (n := cp_map.get((s.connector, s.pin))) is not None
-            else s
-            for s in layout.slots
-        ]
-    else:
-        new_slots = list(layout.slots)
-    return replace(layout, slots=new_slots)
+    if layout.match_by == "connector_pin":
+        return layout
+    column = _column_for(layout, mapping)
+    if column is None:
+        return layout
+
+    ident_map = mapping.idents_for(column)
+    folded = {i.casefold(): n for i, n in ident_map.items()}
+
+    def rewired(slot):
+        if not slot.ident:
+            return slot
+        net = ident_map.get(slot.ident) or folded.get(slot.ident.casefold())
+        if net is None:
+            return slot
+        return replace(slot, connector=net.connector, pin=net.pin)
+
+    return replace(layout, slots=[rewired(s) for s in layout.slots])
 
 
-__all__ = ["Mapping", "Net", "apply_to", "coverage", "load_csv"]
+__all__ = [
+    "CONNECTOR_HEADER",
+    "IDENT_SEPARATOR",
+    "PIN_HEADERS",
+    "CoverageReport",
+    "Mapping",
+    "Net",
+    "apply_to",
+    "coverage",
+    "coverage_report",
+    "load_csv",
+    "normalize_header",
+    "normalize_ident",
+]

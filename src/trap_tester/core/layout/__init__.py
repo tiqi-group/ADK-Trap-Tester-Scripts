@@ -16,6 +16,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from trap_tester.core.layout.addressing import (
+    SYNTHETIC_CONNECTOR_BASE,
+    canonical_address,
+    is_synthetic,
+)
 from trap_tester.core.layout.annotation import (
     ANNOTATION_STATES,
     Annotation,
@@ -23,26 +28,30 @@ from trap_tester.core.layout.annotation import (
     build_annotation_drawing,
     cycle_state,
 )
-from trap_tester.core.layout.decoration import DECORATION_INFO, decoration_style
 from trap_tester.core.layout.dsub50 import default_json_path, generate_dsub50
 from trap_tester.core.layout.fpc import default_json_path as fpc_json_path
 from trap_tester.core.layout.fpc import generate_fpc
 from trap_tester.core.layout.geometry import in_rot_rect, point_in_poly
 from trap_tester.core.layout.interface import (
+    UNSET_PIN,
     Drawing,
     InterfaceLayout,
     PinMark,
     Slot,
     SlotShape,
+    assign_synthetic_addresses,
     build_drawing,
     slot_pins,
+    slugify,
 )
 from trap_tester.core.layout.iontrap import build_iontrap, generate_iontrap
 from trap_tester.core.layout.mapping import (
+    CoverageReport,
     Mapping,
     Net,
     apply_to,
     coverage,
+    coverage_report,
     load_csv,
 )
 from trap_tester.core.layout.primitives import (
@@ -52,10 +61,6 @@ from trap_tester.core.layout.primitives import (
     Rect,
     Text,
     primitive_from_dict,
-)
-from trap_tester.core.layout.tiling import (
-    TESTER_CONNECTORS,
-    tile_connector_layouts,
 )
 from trap_tester.core.layout.store import (
     add_layout_dir,
@@ -71,6 +76,16 @@ from trap_tester.core.layout.store import (
     load_layout,
     remove_layout_dir,
     user_layouts_dir,
+)
+from trap_tester.core.layout.style import (
+    PAD_CLASSES,
+    SIGNAL_CLASS,
+    pad_legend,
+    pad_style,
+)
+from trap_tester.core.layout.tiling import (
+    TESTER_CONNECTORS,
+    tile_connector_layouts,
 )
 
 _CACHE: dict[str, InterfaceLayout] = {}
@@ -105,8 +120,9 @@ def dsub50_layout_for_connector(connector: int) -> InterfaceLayout:
     if connector in present:
         slots = [s for s in base.slots if s.connector == connector]
         return InterfaceLayout(
-            name=f"DSUB-50 (connector {connector})", units=base.units,
-            key_by=base.key_by, background=base.background, slots=slots,
+            name=f"DSUB-50 (connector {connector})", slug=base.slug,
+            units=base.units, pin_space=base.pin_space, match_by=base.match_by,
+            background=base.background, slots=slots,
         )
     return generate_dsub50(connector=connector)
 
@@ -129,8 +145,9 @@ def fpc_layout_for_connector(connector: int) -> InterfaceLayout:
         return base
     if connector in present:
         return InterfaceLayout(
-            name=f"FPC ribbon (connector {connector})", units=base.units,
-            key_by=base.key_by, background=base.background,
+            name=f"FPC ribbon (connector {connector})", slug=base.slug,
+            units=base.units, pin_space=base.pin_space, match_by=base.match_by,
+            background=base.background,
             slots=[s for s in base.slots if s.connector == connector],
         )
     return generate_fpc(connector=connector)
@@ -218,17 +235,23 @@ def filter_layout_connector(
         return layout
     return InterfaceLayout(
         name=f"{layout.name} (connector {connector})",
-        units=layout.units, key_by=layout.key_by, background=layout.background,
+        slug=layout.slug, units=layout.units, pin_space=layout.pin_space,
+        match_by=layout.match_by, background=layout.background,
         slots=[s for s in layout.slots if s.connector == connector],
     )
 
 
 __all__ = [
     "ANNOTATION_STATES",
-    "DECORATION_INFO",
+    "PAD_CLASSES",
+    "SIGNAL_CLASS",
+    "SYNTHETIC_CONNECTOR_BASE",
+    "TESTER_CONNECTORS",
+    "UNSET_PIN",
     "Annotation",
     "AnnotationSet",
     "Circle",
+    "CoverageReport",
     "Drawing",
     "InterfaceLayout",
     "Line",
@@ -239,17 +262,18 @@ __all__ = [
     "Rect",
     "Slot",
     "SlotShape",
-    "TESTER_CONNECTORS",
     "Text",
     "add_layout_dir",
     "apply_to",
+    "assign_synthetic_addresses",
     "build_annotation_drawing",
     "build_drawing",
     "build_iontrap",
+    "canonical_address",
     "configured_layout_dirs",
     "coverage",
+    "coverage_report",
     "cycle_state",
-    "decoration_style",
     "delete_layout",
     "dsub50_layout",
     "dsub50_layout_for_connector",
@@ -265,6 +289,7 @@ __all__ = [
     "import_layout",
     "import_mapping",
     "in_rot_rect",
+    "is_synthetic",
     "layout_for",
     "layout_search_dirs",
     "list_mapping_files",
@@ -272,10 +297,13 @@ __all__ = [
     "load_csv",
     "load_layout",
     "mapping_options",
+    "pad_legend",
+    "pad_style",
     "point_in_poly",
     "primitive_from_dict",
     "remove_layout_dir",
     "slot_pins",
+    "slugify",
     "tile_connector_layouts",
     "user_layout_options",
     "user_layouts_dir",

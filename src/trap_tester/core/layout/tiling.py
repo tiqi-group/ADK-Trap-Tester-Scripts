@@ -132,7 +132,8 @@ def tile_connector_layouts(
         slots += [_shift_slot(s, dx, dy) for s in lay.slots]
         background += [_shift_primitive(p, dx, dy) for p in lay.background]
     return InterfaceLayout(
-        name=name, units=layouts[0].units, key_by=layouts[0].key_by,
+        name=name, slug=layouts[0].slug, units=layouts[0].units,
+        pin_space=layouts[0].pin_space, match_by=layouts[0].match_by,
         background=background, slots=slots,
     )
 

@@ -89,36 +89,54 @@ def test_annotation_from_dict_rejects_unknown_state():
         Annotation.from_dict({"connector": 1, "channel": 46, "state": "??"})
 
 
+def test_a_v1_annotation_file_is_rejected():
+    """v1 keyed marks on a channel; that format is not read any more."""
+    with pytest.raises(ValueError, match="Unsupported annotations version"):
+        AnnotationSet.from_dict({
+            "kind": "trap-tester-annotations", "version": 1,
+            "annotations": [{"connector": 0, "channel": 46, "state": "faulty"}],
+        })
+
+
 def test_mark_correlates_across_interfaces():
-    # DSUB pin 1 carries channel 46, which the FPC ribbon exposes on conductor 48.
-    # The built-ins are connector 0 (DSUB connectors are 0-indexed).
+    """A mark is keyed by canonical address, so it crosses pin spaces.
+
+    DSUB pin 1 carries signal 46, which the FPC ribbon exposes on conductor 48. The
+    mark is stored on the DSUB address (0, 1); the ribbon slot for conductor 48
+    reduces to that same address, so the fault shows up there too — with no stored
+    channel on either side. The built-ins are connector 0 (DSUB is 0-indexed).
+    """
     a = AnnotationSet()
-    a.set_state(0, 46, "faulty")
+    a.set_state(0, 1, "faulty")  # connector 0, DSUB pin 1
 
     d_dsub = build_annotation_drawing(dsub50_layout(), a)  # whole (connector 0)
-    by_channel = {p.channel: p for p in d_dsub.pins}
-    assert by_channel[46].status == "faulty" and by_channel[46].pin == 1
-    # every other channel is unmarked ("clear")
-    assert all(p.status == "clear" for p in d_dsub.pins if p.channel not in (None, 46))
+    by_pin = {p.pin: p for p in d_dsub.pins}
+    assert by_pin[1].status == "faulty"
+    # every other pin is unmarked ("clear")
+    assert all(p.status == "clear" for p in d_dsub.pins if p.pin != 1)
 
     d_fpc = build_annotation_drawing(fpc_layout(), a)
-    fpc_by_channel = {p.channel: p for p in d_fpc.pins}
-    # same channel, different interface -> the fault lands on conductor 48
-    assert fpc_by_channel[46].status == "faulty" and fpc_by_channel[46].pin == 48
+    fpc_by_pin = {p.pin: p for p in d_fpc.pins}
+    # same address, different interface -> the fault lands on conductor 48
+    assert fpc_by_pin[48].status == "faulty"
+    assert all(
+        p.status != "faulty" for p in d_fpc.pins if p.pin != 48
+    )
 
 
-def test_gnd_conductors_are_unmapped_and_not_clickable():
+def test_gnd_conductors_are_inert():
+    """The ribbon's shield conductors are ``class="gnd"``: drawn, never markable."""
     d = build_annotation_drawing(fpc_layout(), AnnotationSet())
     by_pin = {p.pin: p for p in d.pins}
     for gnd in (1, 51):
-        assert by_pin[gnd].channel is None
-        assert by_pin[gnd].status == "unmapped"
+        assert by_pin[gnd].pad_class == "gnd"
+        assert by_pin[gnd].status == "gnd"
         assert by_pin[gnd].measured is False
 
 
 def test_connector_scoped():
     # a mark on connector 0 does not appear when focusing a different connector
     a = AnnotationSet()
-    a.set_state(0, 46, "faulty")
+    a.set_state(0, 1, "faulty")
     d5 = build_annotation_drawing(dsub50_layout_for_connector(5), a)
-    assert all(p.status in ("clear", "unmapped") for p in d5.pins)
+    assert all(p.status in ("clear", "unmapped", "gnd") for p in d5.pins)
