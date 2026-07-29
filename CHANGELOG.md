@@ -12,6 +12,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Smaller executable bundles: the PyInstaller spec now drops Qt runtime pieces the
+  app cannot reach (the virtual-keyboard plugin and the QtQml/QtQuick stack it was
+  the only user of, the GTK platform theme and its libgtk-3, the PDF image-format
+  plugin and QtPdf, and Qt's own UI translations) and strips symbols on Linux.
+  The Linux bundle goes from 373 MB to 316 MB, and its release archive from
+  144 MB to 127 MB.
+
 ### Added
 - Cross-platform PySide6 GUI (`trap-tester-gui`) with six panels: Measurement,
   Analysis, Interfaces, Device Info, Self-Test, and Settings.
