@@ -11,7 +11,9 @@ Layout resolution:
 * ``results_dir()`` — the output root (default ``results/``, relative to the
   working directory unless set to an absolute path);
 * ``measurements_dir()`` / ``analysis_dir()`` — the ``measurements`` /
-  ``analysis`` sub-folders under it, where result JSONs and report texts go.
+  ``analysis`` sub-folders under it, where result JSONs and report texts go;
+* ``presets_dir()`` — analysis presets (acceptance criteria + golden references).
+  Configuration rather than output, so it defaults into the app data dir.
 """
 
 from __future__ import annotations
@@ -24,6 +26,8 @@ from trap_tester.core.layout.store import app_data_dir
 _CONFIG_NAME = "app_config.json"
 _RESULTS_KEY = "results_dir"
 _DEFAULT_RESULTS = "results"
+_PRESETS_KEY = "presets_dir"
+_DEFAULT_PRESETS = "analysis_presets"  # a sub-folder of the app data dir
 _THEME_KEY = "theme"
 _DEFAULT_THEME = "light"
 _THEMES = ("light", "dark")
@@ -83,6 +87,35 @@ def analysis_dir() -> Path:
     return results_dir() / "analysis"
 
 
+def default_presets_dir() -> Path:
+    """Where analysis presets live unless the user points elsewhere."""
+    return app_data_dir() / _DEFAULT_PRESETS
+
+
+def presets_dir() -> Path:
+    """Where analysis presets (acceptance criteria + golden references) live.
+
+    Unlike the results tree this is a *configuration* store, so it defaults into
+    the per-user app data dir beside the layout store — but it is configurable,
+    because a team sharing acceptance criteria will want it on a shared or
+    version-controlled folder.
+    """
+    configured = _load().get(_PRESETS_KEY)
+    return Path(configured).expanduser() if configured else default_presets_dir()
+
+
+def set_presets_dir(path: str | Path | None) -> Path:
+    """Persist the presets folder (``None``/empty restores the default)."""
+    data = _load()
+    text = str(path).strip() if path is not None else ""
+    if text:
+        data[_PRESETS_KEY] = text
+    else:
+        data.pop(_PRESETS_KEY, None)
+    _save(data)
+    return presets_dir()
+
+
 def theme() -> str:
     """The configured UI theme (``"light"`` or ``"dark"``; default light)."""
     value = _load().get(_THEME_KEY, _DEFAULT_THEME)
@@ -133,8 +166,11 @@ __all__ = [
     "UI_SCALE_MIN",
     "analysis_dir",
     "config_path",
+    "default_presets_dir",
     "measurements_dir",
+    "presets_dir",
     "results_dir",
+    "set_presets_dir",
     "set_results_dir",
     "set_theme",
     "set_ui_scale",

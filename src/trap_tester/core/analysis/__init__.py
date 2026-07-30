@@ -6,9 +6,11 @@ returns a :class:`AnalysisResult` — a list of per-pin :class:`Finding` objects
 a plain-text report and the metadata a viewer needs to plot the outcome. The
 GUI Analysis panel and any CLI/test harness share this single source of truth.
 
-The filter analysis is refactored from ``analysis/filter_tester_analysis.py``
-(same C/tolerance decision tree); resistance and voltage analyses summarise the
-flags/values their measurements already produce.
+Every analysis judges each measured/fitted quantity against a min/max acceptance
+band, or — where a golden reference supplies an expected value for that pin —
+against ``expected ± tolerance``. The quantities themselves are declared once in
+:mod:`~trap_tester.core.analysis.quantities`; the band logic lives in
+:mod:`~trap_tester.core.analysis.acceptance`.
 """
 
 from __future__ import annotations
@@ -23,8 +25,8 @@ import pandas as pd
 # so a pin is described and coloured consistently everywhere.
 STATUS_INFO: dict[str, tuple[str, str]] = {
     "ok": ("OK", "#2a9d3f"),
-    "off_nominal": ("Off-nominal", "#e08e0b"),
-    "over_nominal": ("Above nominal (possible short)", "#d35400"),
+    "below_limit": ("Below limit", "#e08e0b"),
+    "above_limit": ("Above limit", "#d35400"),
     "not_detected": ("Not detected", "#6b6b6b"),
     "shorted": ("Shorted", "#c0392b"),
     "high_impedance": ("High impedance", "#8e44ad"),
@@ -33,7 +35,13 @@ STATUS_INFO: dict[str, tuple[str, str]] = {
 
 @dataclass
 class Finding:
-    """The verdict for a single measured point (one DSUB pin on one connector)."""
+    """The verdict for a single measured point (one DSUB pin on one connector).
+
+    ``value`` is the primary quantity — the one plotted on the y-axis. The
+    ``values`` / ``limits`` / ``expected`` maps carry *every* quantity the
+    analysis judged (keyed by ``Quantity.key``), so a measurement that fits more
+    than one value keeps all of them for the report, the tooltip and the plot.
+    """
 
     connector: int
     dsub_pin: int
@@ -41,6 +49,10 @@ class Finding:
     value: float  # the metric plotted on the y-axis (C_nF / R_Ohm / V_avg)
     status: str  # a key of STATUS_INFO
     message: str  # one human-readable line describing this pin
+    values: dict[str, float] = field(default_factory=dict)
+    limits: dict[str, tuple[float, float]] = field(default_factory=dict)
+    expected: dict[str, float] = field(default_factory=dict)  # reference bands only
+    failed: list[str] = field(default_factory=list)  # quantity keys that failed
 
 
 @dataclass
@@ -52,8 +64,10 @@ class AnalysisResult:
     findings: list[Finding]
     value_label: str  # y-axis label for the visualiser
     params: dict[str, Any] = field(default_factory=dict)
-    band: tuple[float, float] | None = None  # shaded acceptable y-region
-    nominal: float | None = None  # dashed nominal line
+    # The band every pin shares, shaded across the plot. ``None`` when a golden
+    # reference gives each pin its own — those are drawn per point from
+    # ``Finding.limits`` instead.
+    band: tuple[float, float] | None = None
     log_y: bool = False  # plot the value axis on a log scale
 
     @property
@@ -66,6 +80,15 @@ class AnalysisResult:
     @property
     def n_faults(self) -> int:
         return sum(n for s, n in self.summary.items() if s != "ok")
+
+    @property
+    def failures_by_quantity(self) -> dict[str, int]:
+        """How many pins each quantity failed on, keyed by ``Quantity.key``."""
+        counts: dict[str, int] = {}
+        for f in self.findings:
+            for key in f.failed:
+                counts[key] = counts.get(key, 0) + 1
+        return counts
 
 
 def render_report(result: AnalysisResult, source_name: str = "") -> str:
@@ -96,15 +119,44 @@ def render_report(result: AnalysisResult, source_name: str = "") -> str:
         if n:
             lines.append(f"  {label}: {n}")
     lines.append(f"  Faults total: {result.n_faults}")
+    out_of_band = _out_of_band_line(result)
+    if out_of_band:
+        lines.append(out_of_band)
     return "\n".join(lines)
+
+
+def _out_of_band_line(result: AnalysisResult) -> str:
+    """Which measured value went out of band, e.g. ``"  Out of band: C 2, R 1"``.
+
+    The pin status alone cannot say, for a measurement that judges more than one
+    quantity (the filter fits both a C and an R).
+    """
+    counts = result.failures_by_quantity
+    parts = [
+        f"{q.symbol} {counts[q.key]}"
+        for q in quantities_for(result.measurement)
+        if q.key in counts
+    ]
+    return f"  Out of band: {', '.join(parts)}" if parts else ""
 
 
 # ---- registry --------------------------------------------------------------
 # Imports are deferred to avoid a heavy import at package load; they are cheap
 # pure-python modules but this keeps the dependency direction obvious.
+from trap_tester.core.analysis.acceptance import (  # noqa: E402
+    AcceptanceSettings,
+    QuantityVerdict,
+    Reference,
+    reference_key,
+)
 from trap_tester.core.analysis.filter_analysis import (  # noqa: E402
     FilterAnalysisSettings,
     analyse_filter,
+)
+from trap_tester.core.analysis.quantities import (  # noqa: E402
+    Quantity,
+    primary_quantity,
+    quantities_for,
 )
 from trap_tester.core.analysis.resistance_analysis import (  # noqa: E402
     ResistanceAnalysisSettings,
@@ -145,8 +197,15 @@ def analyse(measurement: str | None, df: pd.DataFrame, settings: Any) -> Analysi
 
 __all__ = [
     "STATUS_INFO",
+    "AcceptanceSettings",
     "Finding",
     "AnalysisResult",
+    "Quantity",
+    "QuantityVerdict",
+    "Reference",
+    "primary_quantity",
+    "quantities_for",
+    "reference_key",
     "render_report",
     "ANALYSES",
     "has_analysis",

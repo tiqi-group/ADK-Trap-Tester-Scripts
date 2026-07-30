@@ -113,7 +113,7 @@ def test_build_drawing_colours_match_status():
     assert measured[1].status == "ok"
     assert measured[2].status == "shorted"
     assert measured[3].status == "not_detected"
-    assert measured[4].status == "over_nominal"
+    assert measured[4].status == "above_limit"
     for p in measured.values():
         assert p.fill == A.STATUS_INFO[p.status][1]
     # untested pins are drawn faint

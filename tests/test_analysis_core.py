@@ -33,27 +33,47 @@ def _filter_df() -> pd.DataFrame:
 def test_filter_classification():
     res = A.analyse_filter(_filter_df(), A.FilterAnalysisSettings())
     statuses = [f.status for f in res.findings]
-    assert statuses == ["ok", "over_nominal", "not_detected", "shorted"]
-    assert res.summary == {"ok": 1, "over_nominal": 1, "not_detected": 1, "shorted": 1}
+    assert statuses == ["ok", "above_limit", "not_detected", "shorted"]
+    assert res.summary == {"ok": 1, "above_limit": 1, "not_detected": 1, "shorted": 1}
     assert res.n_faults == 3
     # the FPC-conductor mapping is applied
     assert res.findings[0].fpc_conductor is not None
+    # every judged quantity is kept on the finding, not just the plotted one
+    assert set(res.findings[0].values) == {"c", "r"}
+    assert res.findings[1].failed == ["c"]
 
 
-def test_filter_below_band_is_off_nominal():
-    # a detectable cap below the acceptance band stays "off_nominal"
+def test_filter_below_band_is_below_limit():
+    # a detectable cap below the acceptance window, but above the detection floor
     df = pd.DataFrame(
         [{"DSUB connector": 0, "DSUB pin": 1, "Shorted": False,
           "C_filter_nF": 0.6, "R_filter_Ohm": 2000}]
     )
     res = A.analyse_filter(df, A.FilterAnalysisSettings())
-    assert res.findings[0].status == "off_nominal"
+    assert res.findings[0].status == "below_limit"
 
 
-def test_filter_tolerance_is_configurable():
-    # a very loose tolerance turns the off-nominal pin nominal
-    res = A.analyse_filter(_filter_df(), A.FilterAnalysisSettings(rel_tolerance=1.0))
+def test_filter_limits_are_configurable():
+    # a wide-open C window turns the above-limit pin nominal
+    res = A.analyse_filter(
+        _filter_df(), A.FilterAnalysisSettings(c_min_nf=0.0, c_max_nf=2.0)
+    )
     assert [f.status for f in res.findings] == ["ok", "ok", "not_detected", "shorted"]
+
+
+def test_filter_resistance_is_gated_too():
+    # R defaults wide open; narrowing it fails a pin whose C is fine
+    df = pd.DataFrame(
+        [{"DSUB connector": 0, "DSUB pin": 1, "Shorted": False,
+          "C_filter_nF": 1.0, "R_filter_Ohm": 900}]
+    )
+    assert A.analyse_filter(df, A.FilterAnalysisSettings()).findings[0].status == "ok"
+    res = A.analyse_filter(
+        df, A.FilterAnalysisSettings(r_min_ohm=1500, r_max_ohm=2500)
+    )
+    assert res.findings[0].status == "below_limit"
+    assert res.findings[0].failed == ["r"]
+    assert "R 900 Ohm" in res.findings[0].message
 
 
 def test_resistance_classification():
@@ -80,7 +100,7 @@ def test_voltage_window():
         ]
     )
     res = A.analyse_voltage(df, A.VoltageAnalysisSettings(v_min=-5, v_max=5))
-    assert [f.status for f in res.findings] == ["ok", "off_nominal"]
+    assert [f.status for f in res.findings] == ["ok", "above_limit"]
 
 
 def test_registry_dispatch_and_unknown():

@@ -1,9 +1,15 @@
 """Matplotlib visualiser for an :class:`AnalysisResult`.
 
 Draws the analysed metric (capacitance / resistance / voltage) per DSUB pin,
-colouring each point by its verdict and shading the acceptable band. Pins with
-no numeric value (not detected / shorted) are shown as ``x`` markers along the
-bottom so they are still visible.
+colouring each point by its verdict and showing the band it was judged against.
+Pins with no numeric value (not detected / shorted) are shown as ``x`` markers
+along the bottom so they are still visible.
+
+The band is drawn one of two ways, matching how the verdict was reached: one
+shaded region across the plot when every pin shares the same min/max limits, or
+a green column per pin (plus a dash at the expected value) when a golden
+reference gives each pin its own band. Pins the reference does not cover keep
+their fallback limits, so a partially covered result shows both.
 
 A result spanning several connectors is shown one connector at a time; the
 connector selector lives in the Analysis panel (shared with the connector map),
@@ -18,8 +24,16 @@ from matplotlib.figure import Figure
 from matplotlib.lines import Line2D
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
-from trap_tester.core.analysis import STATUS_INFO, AnalysisResult, Finding
+from trap_tester.core.analysis import (
+    STATUS_INFO,
+    AnalysisResult,
+    Finding,
+    primary_quantity,
+)
 from trap_tester.gui import theme
+
+_BAND_COLOR = "#2a9d3f"
+_LOG_FLOOR = 1e-12  # a log axis cannot show a band edge at (or below) zero
 
 
 def _title_kw() -> dict:
@@ -107,12 +121,15 @@ class AnalysisView(QWidget):
             pad = 0.1 * (vmax - vmin or 1.0)
             placeholder_y = vmin - pad
 
-        # acceptable band + nominal line (drawn behind the points)
+        # the acceptance band, drawn behind the points: one region when every pin
+        # shares it, otherwise a column per pin (a golden reference is per pin)
+        banded = expected = False
         if result.band is not None:
             lo, hi = result.band
-            ax.axhspan(lo, hi, color="#2a9d3f", alpha=0.08, label="_band")
-        if result.nominal is not None:
-            ax.axhline(result.nominal, color="#2a9d3f", ls="--", lw=0.8)
+            ax.axhspan(lo, hi, color=_BAND_COLOR, alpha=0.08, label="_band")
+            banded = True
+        else:
+            banded, expected = self._draw_per_pin_bands(findings, result)
 
         for group, marker, y_of in (
             (finite, "o", lambda f: f.value),
@@ -137,14 +154,61 @@ class AnalysisView(QWidget):
         ax.set_xlabel("DSUB pin")
         ax.set_ylabel(result.value_label)
         ax.grid(True, alpha=0.3)
-        handles = self._legend(findings)
+        handles = self._legend(findings, banded, expected)
         if handles:
             ax.legend(handles=handles, fontsize=7, loc="center left",
                       bbox_to_anchor=(1.02, 0.5))
         self.canvas.draw_idle()
 
+    def _draw_per_pin_bands(
+        self, findings: list[Finding], result: AnalysisResult
+    ) -> tuple[bool, bool]:
+        """Draw each pin's own band + expected value. Returns what was drawn.
+
+        Only the plotted (primary) quantity is drawn; the others gate the verdict
+        and are spelled out in the report and the connector map's tooltip.
+        """
+        quantity = primary_quantity(result.measurement)
+        if quantity is None:
+            return False, False
+        key = quantity.key
+
+        xs, los, his = self._band_columns(findings, key, log=result.log_y)
+        if xs:
+            self.ax.vlines(
+                xs, los, his, color=_BAND_COLOR, alpha=0.22, lw=6, zorder=1
+            )
+
+        marks = [(f.dsub_pin, f.expected[key]) for f in findings if key in f.expected]
+        if marks:
+            self.ax.scatter(
+                [x for x, _ in marks], [y for _, y in marks],
+                marker="_", c=_BAND_COLOR, s=45, linewidths=1.2, zorder=2,
+            )
+        return bool(xs), bool(marks)
+
     @staticmethod
-    def _legend(findings: list[Finding]) -> list[Line2D]:
+    def _band_columns(
+        findings: list[Finding], key: str, log: bool
+    ) -> tuple[list[int], list[float], list[float]]:
+        """``(pins, lows, highs)`` for the pins that carry a finite band."""
+        xs: list[int] = []
+        los: list[float] = []
+        his: list[float] = []
+        for f in findings:
+            limits = f.limits.get(key)
+            if limits is None or not all(np.isfinite(v) for v in limits):
+                continue
+            lo, hi = limits
+            xs.append(f.dsub_pin)
+            los.append(max(lo, _LOG_FLOOR) if log else lo)
+            his.append(max(hi, _LOG_FLOOR) if log else hi)
+        return xs, los, his
+
+    @staticmethod
+    def _legend(
+        findings: list[Finding], banded: bool, expected: bool
+    ) -> list[Line2D]:
         present = {f.status for f in findings}
         handles: list[Line2D] = []
         for status, (label, color) in STATUS_INFO.items():
@@ -153,4 +217,14 @@ class AnalysisView(QWidget):
                     Line2D([], [], marker="o", ls="", color=color, label=label,
                            markersize=6)
                 )
+        if banded:
+            handles.append(
+                Line2D([], [], marker="|", ls="", color=_BAND_COLOR, alpha=0.5,
+                       label="Acceptance band", markersize=10, markeredgewidth=6)
+            )
+        if expected:
+            handles.append(
+                Line2D([], [], marker="_", ls="", color=_BAND_COLOR,
+                       label="Expected (reference)", markersize=8)
+            )
         return handles

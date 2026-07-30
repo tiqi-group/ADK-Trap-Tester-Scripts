@@ -2,8 +2,9 @@
 
 Two columns of green (editable) / red (read-only) boxes:
 
-Left  — Output locations: the results directory (and its ``measurements`` /
-        ``analysis`` sub-folders), persisted so a change survives restarts.
+Left  — File locations: the results directory (and its ``measurements`` /
+        ``analysis`` sub-folders) plus the analysis-presets folder, each
+        persisted (and reset) on its own so a change survives restarts.
 Right — Custom layouts & mappings: the writable store (read-only, set by the OS
         default or ``TRAP_TESTER_LAYOUTS_DIR``) plus the extra folders searched
         for layouts/mapping CSVs (add / remove; also fed by
@@ -15,6 +16,7 @@ panels' browsers and selectors without a restart.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
@@ -37,7 +39,9 @@ from PySide6.QtWidgets import (
 from trap_tester.core.appconfig import (
     analysis_dir,
     measurements_dir,
+    presets_dir,
     results_dir,
+    set_presets_dir,
     set_results_dir,
     set_theme,
     set_ui_scale,
@@ -78,38 +82,27 @@ class SettingsPanel(QWidget):
 
     # ---- output locations --------------------------------------------------
     def _build_output_box(self) -> QWidget:
-        box = QGroupBox("Output locations")
+        box = QGroupBox("File locations")
         box.setProperty("role", "interactive")
         v = QVBoxLayout(box)
 
         v.addWidget(_wrap_label(
-            "Where measurements and analysis reports are written. A relative path "
-            "is resolved against the folder the app runs in."
+            "Where measurements and analysis reports are written, and where "
+            "analysis presets are kept. A relative path is resolved against the "
+            "folder the app runs in."
         ))
 
-        row = QHBoxLayout()
-        row.addWidget(QLabel("Results directory:"))
-        self._results_edit = QLineEdit()
-        self._results_edit.setProperty("role", "interactive")
-        self._results_edit.returnPressed.connect(self._apply_results)
-        row.addWidget(self._results_edit, 1)
-        browse = QPushButton("Browse…")
-        browse.setProperty("role", "interactive")
-        browse.clicked.connect(self._browse_results)
-        row.addWidget(browse)
-        v.addLayout(row)
-
-        btn_row = QHBoxLayout()
-        apply_btn = QPushButton("Apply")
-        apply_btn.setProperty("role", "interactive")
-        apply_btn.clicked.connect(self._apply_results)
-        reset_btn = QPushButton("Reset to default")
-        reset_btn.setProperty("role", "interactive")
-        reset_btn.clicked.connect(self._reset_results)
-        btn_row.addWidget(apply_btn)
-        btn_row.addWidget(reset_btn)
-        btn_row.addStretch(1)
-        v.addLayout(btn_row)
+        self._results_setting = _PathSetting(
+            "Results directory:", results_dir, set_results_dir,
+            "Choose results directory",
+        )
+        self._presets_setting = _PathSetting(
+            "Analysis presets:", presets_dir, set_presets_dir,
+            "Choose analysis presets directory",
+        )
+        for setting in (self._results_setting, self._presets_setting):
+            setting.changed.connect(self._on_path_changed)
+            v.addWidget(setting)
 
         # resolved, read-only echo of where files actually land
         self._resolved = QLabel()
@@ -121,28 +114,17 @@ class SettingsPanel(QWidget):
         return box
 
     def _refresh_output(self) -> None:
-        """Reflect the persisted results dir in the edit + resolved echo."""
-        self._results_edit.setText(str(results_dir()))
+        """Reflect the persisted paths in the edits + the resolved echo."""
+        self._results_setting.refresh()
+        self._presets_setting.refresh()
         self._resolved.setText(
             "Resolved to:\n"
             f"  Measurements:  {measurements_dir().resolve()}\n"
-            f"  Analysis:      {analysis_dir().resolve()}"
+            f"  Analysis:      {analysis_dir().resolve()}\n"
+            f"  Presets:       {presets_dir().resolve()}"
         )
 
-    def _browse_results(self) -> None:
-        start = str(results_dir().resolve())
-        path = QFileDialog.getExistingDirectory(self, "Choose results directory", start)
-        if path:
-            self._results_edit.setText(path)
-            self._apply_results()
-
-    def _apply_results(self) -> None:
-        set_results_dir(self._results_edit.text())
-        self._refresh_output()
-        self.changed.emit()
-
-    def _reset_results(self) -> None:
-        set_results_dir(None)
+    def _on_path_changed(self) -> None:
         self._refresh_output()
         self.changed.emit()
 
@@ -284,3 +266,75 @@ def _wrap_label(text: str) -> QLabel:
     label = QLabel(text)
     label.setWordWrap(True)
     return label
+
+
+class _PathSetting(QWidget):
+    """One configurable folder: an edit + Browse…, with its own Apply / Reset.
+
+    Each path resets independently — sharing one "Reset to defaults" button
+    would silently restore a folder the operator never touched.
+    """
+
+    changed = Signal()
+
+    def __init__(
+        self,
+        label: str,
+        read: Callable[[], Path],
+        write: Callable[[str | Path | None], Path],
+        dialog_title: str,
+    ) -> None:
+        super().__init__()
+        self._read = read
+        self._write = write
+        self._dialog_title = dialog_title
+
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel(label))
+        self._edit = QLineEdit()
+        self._edit.setProperty("role", "interactive")
+        self._edit.returnPressed.connect(self.apply)
+        row.addWidget(self._edit, 1)
+        browse = QPushButton("Browse…")
+        browse.setProperty("role", "interactive")
+        browse.clicked.connect(self._browse)
+        row.addWidget(browse)
+        v.addLayout(row)
+
+        btn_row = QHBoxLayout()
+        apply_btn = QPushButton("Apply")
+        apply_btn.setProperty("role", "interactive")
+        apply_btn.clicked.connect(self.apply)
+        reset_btn = QPushButton("Reset to default")
+        reset_btn.setProperty("role", "interactive")
+        reset_btn.clicked.connect(self.reset)
+        btn_row.addWidget(apply_btn)
+        btn_row.addWidget(reset_btn)
+        btn_row.addStretch(1)
+        v.addLayout(btn_row)
+
+        self.refresh()
+
+    def refresh(self) -> None:
+        self._edit.setText(str(self._read()))
+
+    def _browse(self) -> None:
+        path = QFileDialog.getExistingDirectory(
+            self, self._dialog_title, str(self._read().resolve())
+        )
+        if path:
+            self._edit.setText(path)
+            self.apply()
+
+    def apply(self) -> None:
+        self._write(self._edit.text())
+        self.refresh()
+        self.changed.emit()
+
+    def reset(self) -> None:
+        self._write(None)
+        self.refresh()
+        self.changed.emit()
