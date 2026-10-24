@@ -33,7 +33,10 @@ SEVERITY: dict[str, int] = {
     "ok": 0,
     "below_limit": 1,
     "above_limit": 2,
+    "pair_mismatch": 2,
     "high_impedance": 3,
+    "loop_open": 3,
+    "extra_short": 3,
     "not_detected": 4,
     "shorted": 5,
 }

@@ -12,6 +12,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Analysis modes.** A measurement can now be analysed more than one way; a
+  **Mode** selector appears in the Analysis panel when there is a choice. Presets
+  record their mode (`"analysis"`; a preset without one belongs to the default
+  mode) and the preset list shows only the selected mode's presets. A report saved
+  from a non-default mode carries the mode in its file name.
+- **Loopback mode for `measure_filter`**, for testing an interface fitted with a
+  loopback PCB that shorts its pads in pairs: a paired pin should read ~2× the
+  nominal filter C, an unpaired pin ~1×. Verdicts *Loop open*, *Extra short* and
+  *Pair mismatch* (the two pins of a pair disagree) join the existing ones. Pairs
+  are named by pad in a `loopback-pairs` JSON and placed on tester pins through
+  the selected mapping, so one pairs file serves every cabling; pads the mapping
+  cannot place are reported as warnings above the view and in the report. See the
+  README's "Loopback mode" section.
+
+### Fixed
+- **Self-test could not be stopped** when the scope never triggered (e.g. no
+  board attached): each capture blocked inside dwfpy waiting for a trigger, so
+  Stop had no effect. Captures now use the same cancel-aware, timeout-bounded
+  acquisition as the measurements. A new `trigger_timeout` setting (default 1 s,
+  `<= 0` waits forever) bounds the wait; a pin that never triggers is logged as
+  "No trigger", recorded without a correlation value and counted as faulty, and
+  the current check is skipped with a note instead of hanging.
+
 ## [0.2.0] - 2026-07-29
 
 ### Changed

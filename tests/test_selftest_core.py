@@ -7,6 +7,10 @@ matched channels, so every pin correlates ~1.0.
 
 from __future__ import annotations
 
+import time
+from types import SimpleNamespace
+
+from trap_tester.core import selftest
 from trap_tester.core.device import open_device
 from trap_tester.core.reporter import AutoGate, ConsoleReporter, MeasurementContext
 from trap_tester.core.selftest import (
@@ -68,3 +72,42 @@ def test_frontend_cancel_stops_early():
         )
         df = run_frontend_selftest(ctx)
     assert len(df) < 49  # stopped before sweeping every pin
+
+
+def test_frontend_no_trigger_records_pins_as_faulty(monkeypatch):
+    # no board attached: the loopback never triggers, so every pin times out and
+    # is recorded unmeasured (NaN) instead of hanging the run
+    monkeypatch.setattr(selftest, "t", SimpleNamespace(sleep=lambda _s: None))
+    rep = ConsoleReporter()
+    with open_device(force_mock=True) as dev:
+        dev.analog_input.fail_trigger = True
+        ctx = MeasurementContext(
+            device=dev,
+            settings=SelfTestSettings(buffer_size=256, trigger_timeout=0.01),
+            report=rep, gate=AutoGate(),
+        )
+        df = run_frontend_selftest(ctx)
+    assert len(df) == 49
+    assert df["Correlation"].isna().all()
+
+
+def test_frontend_stop_aborts_pending_trigger():
+    # an infinite timeout must still be interruptible by Stop
+    cancelled = {"flag": False}
+    start = time.monotonic()
+
+    def cancel() -> bool:
+        if time.monotonic() - start > 0.2:
+            cancelled["flag"] = True
+        return cancelled["flag"]
+
+    with open_device(force_mock=True) as dev:
+        dev.analog_input.fail_trigger = True
+        ctx = MeasurementContext(
+            device=dev, settings=SelfTestSettings(buffer_size=256, trigger_timeout=0),
+            report=ConsoleReporter(), gate=AutoGate(), should_cancel=cancel,
+        )
+        df = run_frontend_selftest(ctx)
+    assert cancelled["flag"]
+    assert df.empty  # stopped while the first pin was still waiting
+    assert time.monotonic() - start < 5

@@ -116,6 +116,10 @@ class SettingsForm(QWidget):
         """The current value of a ``hidden=True`` field."""
         return self._hidden.get(name)
 
+    def has_hidden(self, name: str) -> bool:
+        """Whether the settings carry a ``hidden=True`` field of that name."""
+        return name in self._hidden
+
     def set_hidden(self, name: str, value: Any) -> None:
         """Replace a ``hidden=True`` field's value (emits :data:`changed`)."""
         self._hidden[name] = value

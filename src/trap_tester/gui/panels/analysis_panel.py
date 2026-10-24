@@ -9,8 +9,12 @@ Right  — the acceptance criteria (green): preset + golden reference, the
          analysis-parameter form, and Run / Save report. Scrollable, because the
          form grows with the number of quantities a measurement judges.
 
-Each measurement has its own analysis (see ``core.analysis``); the parameter
-form and the plot rebuild for whichever measurement produced the loaded file.
+Each measurement has one or more analysis *modes* (see ``core.analysis``) — a
+filter result can be read as a plain characterisation or as a loopback test. A
+Mode selector appears when there is a choice; the parameter form, the presets
+and the plot follow the selected mode. A mode that reads the selected mapping
+(loopback) re-runs whenever the mapping changes, so the map and the verdict
+always agree.
 The layout / connector / mapping selectors let the result be re-projected onto
 any interface — the same correlation the Interfaces panel offers.
 """
@@ -44,6 +48,7 @@ from trap_tester.core import settings as settings_io
 from trap_tester.core.analysis import golden
 from trap_tester.core.analysis import presets as preset_store
 from trap_tester.core.analysis.acceptance import CAT_TOL, Reference
+from trap_tester.core.analysis.loopback import LoopbackPairs, load_pairs
 from trap_tester.core.appconfig import analysis_dir, presets_dir, results_dir
 from trap_tester.core.layout import (
     InterfaceLayout,
@@ -81,6 +86,7 @@ class AnalysisPanel(QWidget):
         super().__init__()
         results_dir().mkdir(parents=True, exist_ok=True)
         self._measurement: str | None = None
+        self._mode: str | None = None  # AnalysisMode.key of the selected mode
         self._df: Any = None
         self._source: Path | None = None
         self._result: analysis_engine.AnalysisResult | None = None
@@ -140,14 +146,21 @@ class AnalysisPanel(QWidget):
         self._params_box = QGroupBox("Analysis parameters")
         self._params_box.setProperty("role", "interactive")
         self._params_layout = QVBoxLayout(self._params_box)
-        # Where the criteria came from (preset + reference) sits above the
-        # numbers themselves; the form is appended after it.
+        # How the result is read (mode), then where the criteria came from
+        # (preset + reference / pairs), above the numbers themselves; the form is
+        # appended after it.
+        self._params_layout.addWidget(self._build_mode_row())
         self._params_layout.addWidget(self._build_preset_row())
         self._reference_label = QLabel()
         self._reference_label.setProperty("role", "viewer")
         self._reference_label.setWordWrap(True)
         self._params_layout.addWidget(self._reference_label)
         self._params_layout.addWidget(self._build_reference_row())
+        self._pairs_label = QLabel()
+        self._pairs_label.setProperty("role", "viewer")
+        self._pairs_label.setWordWrap(True)
+        self._params_layout.addWidget(self._pairs_label)
+        self._params_layout.addWidget(self._build_pairs_row())
         self._params_hint = QLabel("Select a measurement result to analyse.")
         self._params_hint.setWordWrap(True)
         self._params_layout.addWidget(self._params_hint)
@@ -265,6 +278,45 @@ class AnalysisPanel(QWidget):
         v.addWidget(self._mapping_row)
         return box
 
+    def _build_mode_row(self) -> QWidget:
+        """Analysis-mode selector — shown only when a measurement has a choice."""
+        self._mode_row = QWidget()
+        row = QHBoxLayout(self._mode_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.addWidget(QLabel("Mode:"))
+        self._mode_selector = QComboBox()
+        self._mode_selector.setProperty("role", "interactive")
+        self._mode_selector.setToolTip(
+            "How to read this result. The same measurement can be analysed\n"
+            "more than one way, e.g. a filter run through a loopback PCB."
+        )
+        self._mode_selector.currentIndexChanged.connect(self._on_mode_changed)
+        row.addWidget(self._mode_selector, 1)
+        self._mode_row.setVisible(False)
+        return self._mode_row
+
+    def _build_pairs_row(self) -> QWidget:
+        """Loopback pairs: load the pad pairs from a JSON file, or clear them."""
+        self._pairs_row = QWidget()
+        row = QHBoxLayout(self._pairs_row)
+        row.setContentsMargins(0, 0, 0, 0)
+        self._load_pairs_btn = QPushButton("Load pairs…")
+        self._load_pairs_btn.setProperty("role", "interactive")
+        self._load_pairs_btn.setToolTip(
+            "Read a loopback-pairs JSON: which pads the loopback PCB shorts\n"
+            "together. Pads are placed on tester pins through the selected\n"
+            "mapping. Save a preset afterwards to keep them."
+        )
+        self._load_pairs_btn.clicked.connect(self._load_pairs)
+        row.addWidget(self._load_pairs_btn, 1)
+        self._clear_pairs_btn = QPushButton("Clear")
+        self._clear_pairs_btn.setProperty("role", "interactive")
+        self._clear_pairs_btn.setToolTip("Drop the loaded pairs")
+        self._clear_pairs_btn.clicked.connect(self._clear_pairs)
+        row.addWidget(self._clear_pairs_btn)
+        self._pairs_row.setVisible(False)
+        return self._pairs_row
+
     def _build_preset_row(self) -> QWidget:
         """Preset selector + Save as… / Import… (acceptance criteria on file)."""
         self._preset_row = QWidget()
@@ -336,6 +388,15 @@ class AnalysisPanel(QWidget):
         top.addWidget(self._save_view_btn)
         vv.addLayout(top)
 
+        # Problems with the analysis inputs (e.g. a loopback pad the mapping
+        # does not name) — about the setup, not the board, so kept apart from
+        # the findings.
+        self._analysis_warning = QLabel()
+        self._analysis_warning.setProperty("role", "warning")
+        self._analysis_warning.setWordWrap(True)
+        self._analysis_warning.setVisible(False)
+        vv.addWidget(self._analysis_warning)
+
         self._viz_stack = QStackedWidget()
         self._connector_view = ConnectorView()
         self._scatter_view = AnalysisView()
@@ -384,8 +445,9 @@ class AnalysisPanel(QWidget):
         self._viz_stack.setCurrentIndex(view)
         is_map = view == _VIEW_CONNECTOR
         # layout + mapping only affect the connector map; grey them out otherwise
+        # — except a mode that reads the mapping, where it changes the verdict
         self._layout_row.setEnabled(is_map)
-        self._mapping_row.setEnabled(is_map)
+        self._mapping_row.setEnabled(is_map or self._needs_mapping())
         if self._result is None:
             self._conn_row.setVisible(False)
             self._show_all.setEnabled(False)
@@ -447,13 +509,19 @@ class AnalysisPanel(QWidget):
             )
             return
 
-        self._rebuild_form(analysis_engine.analysis_settings_for(measurement))
+        self._refresh_modes()
+        self._rebuild_form(
+            analysis_engine.analysis_settings_for(measurement, self._mode)
+        )
         self._params_box.setTitle(f"Analysis parameters — {measurement}")
         self._run_btn.setEnabled(True)
         self._status.setText(f"Loaded {self._source.name} ({len(df)} rows).")
         self.run_analysis()  # show an initial result immediately
 
     def _set_no_analysis(self, message: str) -> None:
+        self._mode = None
+        self._mode_row.setVisible(False)
+        self._analysis_warning.setVisible(False)
         self._rebuild_form(None)
         self._params_hint.setText(message)
         self._run_btn.setEnabled(False)
@@ -474,6 +542,42 @@ class AnalysisPanel(QWidget):
             self._params_layout.addWidget(self._form)
         self._refresh_presets()
         self._sync_reference()
+        self._sync_pairs()
+
+    # ---- analysis mode -----------------------------------------------------
+    def _refresh_modes(self) -> None:
+        """List the loaded measurement's modes, keeping the current one if offered.
+
+        Keeping it matters when stepping through a batch of loopback results:
+        each newly loaded file stays in loopback mode.
+        """
+        modes = analysis_engine.analysis_modes(self._measurement)
+        keys = [m.key for m in modes]
+        if self._mode not in keys:
+            self._mode = keys[0] if keys else None
+        self._mode_selector.blockSignals(True)
+        self._mode_selector.clear()
+        for m in modes:
+            self._mode_selector.addItem(m.label, m.key)
+        current = keys.index(self._mode) if self._mode else -1
+        self._mode_selector.setCurrentIndex(current)
+        self._mode_selector.blockSignals(False)
+        self._mode_row.setVisible(len(modes) > 1)
+
+    def _on_mode_changed(self, index: int) -> None:
+        """Switch mode: a new form and preset list, then re-run on the same file."""
+        if index < 0 or self._df is None:
+            return
+        self._mode = self._mode_selector.currentData()
+        self._rebuild_form(
+            analysis_engine.analysis_settings_for(self._measurement, self._mode)
+        )
+        self._render()  # the mapping row's enabled state depends on the mode
+        self.run_analysis()
+
+    def _needs_mapping(self) -> bool:
+        mode = analysis_engine.analysis_mode(self._measurement, self._mode)
+        return mode is not None and mode.needs_mapping
 
     # ---- presets -----------------------------------------------------------
     def _refresh_presets(self) -> None:
@@ -487,7 +591,9 @@ class AnalysisPanel(QWidget):
         self._preset_selector.clear()
         self._preset_selector.addItem("None (defaults)", None)
         if self._measurement:
-            for name, path in preset_store.list_presets(self._measurement):
+            for name, path in preset_store.list_presets(
+                self._measurement, self._mode
+            ):
                 self._preset_selector.addItem(name, str(path))
         idx = self._preset_selector.findData(keep) if keep else 0
         self._preset_selector.setCurrentIndex(idx if idx >= 0 else 0)
@@ -498,11 +604,14 @@ class AnalysisPanel(QWidget):
         if index < 0 or self._form is None:
             return
         token = self._preset_selector.currentData()
-        settings_type = analysis_engine.analysis_settings_for(self._measurement)
+        settings_type = analysis_engine.analysis_settings_for(
+            self._measurement, self._mode
+        )
         if not token:
             if settings_type is not None:
                 self._form.set_settings(settings_type())
             self._sync_reference()
+            self._sync_pairs()
             self.run_analysis()
             return
         try:
@@ -517,6 +626,7 @@ class AnalysisPanel(QWidget):
             return
         self._form.set_settings(preset.settings)
         self._sync_reference()
+        self._sync_pairs()
         self._status.setText(f"Preset '{preset.name}' applied.")
         self.run_analysis()
 
@@ -579,7 +689,7 @@ class AnalysisPanel(QWidget):
         The tolerances are only ever used for pins the reference covers, so they
         are greyed out (with the reason on the tooltip) until one is loaded.
         """
-        if self._form is None:
+        if self._form is None or not self._form.has_hidden("reference"):
             self._reference_label.setVisible(False)
             self._reference_row.setVisible(False)
             return
@@ -600,6 +710,58 @@ class AnalysisPanel(QWidget):
             else "No golden reference loaded — every pin is judged against the\n"
             "min/max limits above, so the tolerances are unused.",
         )
+
+    # ---- loopback pairs ----------------------------------------------------
+    def _current_pairs(self) -> LoopbackPairs:
+        if self._form is None:
+            return LoopbackPairs()
+        return self._form.hidden("pairs") or LoopbackPairs()
+
+    def _sync_pairs(self) -> None:
+        """Show the pairs controls for a mode that has them, with what is loaded."""
+        has_pairs = self._form is not None and self._form.has_hidden("pairs")
+        self._pairs_label.setVisible(has_pairs)
+        self._pairs_row.setVisible(has_pairs)
+        if not has_pairs:
+            return
+        pairs = self._current_pairs()
+        text = f"Loopback pairs: {pairs.describe()}"
+        if pairs.source:
+            text += f" (from {pairs.source})"
+        self._pairs_label.setText(text)
+        self._clear_pairs_btn.setEnabled(bool(pairs))
+
+    def _load_pairs(self) -> None:
+        if self._form is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load loopback pairs", "", "Loopback pairs (*.json);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            pairs = load_pairs(path)
+        except (OSError, ValueError) as exc:
+            QMessageBox.warning(
+                self, "Cannot load pairs",
+                f"'{Path(path).name}' is not a valid loopback-pairs file:\n{exc}",
+            )
+            return
+        self._form.set_hidden("pairs", pairs)
+        self._sync_pairs()
+        self.run_analysis()
+        self._status.setText(
+            f"Loaded {len(pairs.pairs)} pair(s) from {Path(path).name}. "
+            "Save a preset to keep them."
+        )
+
+    def _clear_pairs(self) -> None:
+        if self._form is None:
+            return
+        self._form.set_hidden("pairs", LoopbackPairs())
+        self._sync_pairs()
+        self.run_analysis()
+        self._status.setText("Loopback pairs cleared.")
 
     def _save_preset(self) -> None:
         if self._form is None or not self._measurement:
@@ -645,6 +807,19 @@ class AnalysisPanel(QWidget):
                 f"'{Path(path).name}' is not a valid analysis preset:\n{exc}",
             )
             return
+        try:
+            imported = preset_store.load(dest)
+        except (OSError, ValueError):
+            imported = None
+        if (
+            imported is not None
+            and imported.measurement == self._measurement
+            and imported.analysis != self._mode
+        ):
+            # same measurement, other mode: switch to it so the preset can apply
+            idx = self._mode_selector.findData(imported.analysis)
+            if idx >= 0:
+                self._mode_selector.setCurrentIndex(idx)  # rebuilds the form
         self._refresh_presets()
         idx = self._preset_selector.findData(str(dest))
         if idx >= 0:
@@ -662,12 +837,19 @@ class AnalysisPanel(QWidget):
             QMessageBox.warning(self, "Invalid parameters", str(exc))
             return
         try:
-            result = analysis_engine.analyse(self._measurement, self._df, settings)
+            result = analysis_engine.analyse(
+                self._measurement, self._df, settings, mode=self._mode,
+                mapping=self._selected_mapping() if self._needs_mapping() else None,
+            )
         except Exception as exc:  # noqa: BLE001
             QMessageBox.critical(self, "Analysis failed", str(exc))
             return
 
         self._result = result
+        self._analysis_warning.setText(
+            "\n".join(f"⚠ {w}" for w in result.warnings)
+        )
+        self._analysis_warning.setVisible(bool(result.warnings))
         self._connectors = sorted({int(f.connector) for f in result.findings})
         self._conn_selector.blockSignals(True)
         self._conn_selector.clear()
@@ -682,10 +864,13 @@ class AnalysisPanel(QWidget):
         self._report.appendPlainText(analysis_engine.render_report(result, source_name))
         self._save_btn.setEnabled(True)
         self._save_view_btn.setEnabled(True)
-        self._status.setText(
+        status = (
             f"Analysed {source_name}: {result.n_faults} fault(s) "
             f"in {len(result.findings)} pins."
         )
+        if result.warnings:
+            status += f" {len(result.warnings)} warning(s) — see above the view."
+        self._status.setText(status)
 
     # ---- layout selection / import -----------------------------------------
     def _selected_layout(self, connector: int) -> InterfaceLayout | None:
@@ -818,7 +1003,11 @@ class AnalysisPanel(QWidget):
         return self._mapping_cache[token]
 
     def _on_mapping_changed(self, index: int) -> None:
-        if index >= 0 and self._result is not None:
+        if index < 0:
+            return
+        if self._needs_mapping() and self._df is not None:
+            self.run_analysis()  # the mapping is an input here: re-judge
+        elif self._result is not None:
             self._render()
 
     def _import_mapping(self) -> None:
@@ -866,7 +1055,9 @@ class AnalysisPanel(QWidget):
             return
         out_dir = analysis_dir()
         out_dir.mkdir(parents=True, exist_ok=True)
-        out = out_dir / f"{self._source.stem}-result.txt"
+        mode = self._result.mode
+        tag = "" if mode in ("", analysis_engine.DEFAULT_MODE) else f"-{mode}"
+        out = out_dir / f"{self._source.stem}{tag}-result.txt"
         source_name = self._source.name
         try:
             out.write_text(analysis_engine.render_report(self._result, source_name))

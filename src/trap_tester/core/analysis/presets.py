@@ -1,6 +1,6 @@
 """Analysis presets: acceptance criteria saved to (and loaded from) JSON.
 
-A preset is one measurement's acceptance criteria under a name — the min/max
+A preset is one analysis mode's acceptance criteria under a name — the min/max
 limits, the tolerances, and (optionally) the golden reference table. It is what
 makes the acceptance model re-usable: characterise a known-good board once, save
 the preset, and every later board is judged against it.
@@ -12,6 +12,7 @@ scalar settings rather than nested inside them::
       "schema": 1,
       "kind": "analysis-preset",
       "measurement": "measure_filter",
+      "analysis": "standard",
       "name": "AFE v2 acceptance",
       "settings": {"c_min_nf": 0.75, "c_max_nf": 1.25, "rel_tol": 0.1, ...},
       "reference": {
@@ -23,8 +24,9 @@ scalar settings rather than nested inside them::
 
 Presets live in :func:`~trap_tester.core.appconfig.presets_dir` (user-configurable
 in the Settings tab), are discovered recursively so they can be organised into
-sub-folders, and are always scoped to one measurement: loading a filter preset
-over a voltage result is rejected rather than silently ignored.
+sub-folders, and are always scoped to one measurement *and* one analysis mode:
+loading a filter preset over a voltage result is rejected rather than silently
+ignored. A preset without an ``analysis`` key belongs to the default mode.
 """
 
 from __future__ import annotations
@@ -34,7 +36,12 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from trap_tester.core.analysis import ANALYSES, analysis_settings_for
+from trap_tester.core.analysis import (
+    ANALYSES,
+    DEFAULT_MODE,
+    analysis_mode,
+    mode_of_settings,
+)
 from trap_tester.core.appconfig import presets_dir
 
 if TYPE_CHECKING:
@@ -47,12 +54,13 @@ SUFFIX = ".json"
 
 @dataclass
 class Preset:
-    """One named set of acceptance criteria for one measurement."""
+    """One named set of acceptance criteria for one measurement's analysis mode."""
 
     name: str
     measurement: str
     settings: Any  # an AcceptanceSettings dataclass instance
     path: Path | None = field(default=None, compare=False)
+    analysis: str = DEFAULT_MODE  # an AnalysisMode.key of the measurement
 
     @property
     def reference(self) -> Reference:
@@ -83,6 +91,7 @@ def to_payload(preset: Preset) -> dict[str, Any]:
         "schema": SCHEMA_VERSION,
         "kind": KIND,
         "measurement": preset.measurement,
+        "analysis": preset.analysis,
         "name": preset.name,
         "settings": settings,
         "reference": reference,
@@ -105,12 +114,19 @@ def from_payload(data: Any, path: Path | None = None) -> Preset:
             f"unknown measurement {measurement!r}; "
             f"expected one of {sorted(ANALYSES)}"
         )
+    analysis = str(data.get("analysis") or DEFAULT_MODE)
+    mode = analysis_mode(measurement, analysis)
+    if mode is None:
+        raise ValueError(f"unknown analysis mode {analysis!r} for {measurement!r}")
     raw = dict(data.get("settings") or {})
     # The reference is stored beside the settings but is a settings field.
     raw["reference"] = data.get("reference") or {}
-    settings = analysis_settings_for(measurement).from_dict(raw)
+    settings = mode.settings.from_dict(raw)
     name = str(data.get("name") or "") or (path.stem if path else measurement)
-    return Preset(name=name, measurement=measurement, settings=settings, path=path)
+    return Preset(
+        name=name, measurement=measurement, settings=settings, path=path,
+        analysis=analysis,
+    )
 
 
 def load(path: str | Path) -> Preset:
@@ -122,8 +138,15 @@ def load(path: str | Path) -> Preset:
 def save(
     settings: Any, measurement: str, name: str, directory: str | Path | None = None
 ) -> Path:
-    """Write a preset and return its path (an existing name is never clobbered)."""
-    preset = Preset(name=name, measurement=measurement, settings=settings)
+    """Write a preset and return its path (an existing name is never clobbered).
+
+    The analysis mode is the one ``settings`` belongs to, so it cannot disagree
+    with the settings that are saved.
+    """
+    analysis = mode_of_settings(measurement, settings) or DEFAULT_MODE
+    preset = Preset(
+        name=name, measurement=measurement, settings=settings, analysis=analysis
+    )
     dest_dir = Path(directory) if directory is not None else presets_dir()
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = _unique_path(dest_dir / f"{_slug(name)}{SUFFIX}")
@@ -131,7 +154,9 @@ def save(
     return dest
 
 
-def list_presets(measurement: str | None = None) -> list[tuple[str, Path]]:
+def list_presets(
+    measurement: str | None = None, analysis: str | None = None
+) -> list[tuple[str, Path]]:
     """``(display name, path)`` for every readable preset, sorted by name.
 
     Unreadable or foreign JSON in the folder is skipped rather than raised: the
@@ -148,6 +173,8 @@ def list_presets(measurement: str | None = None) -> list[tuple[str, Path]]:
         except (OSError, ValueError):
             continue
         if measurement and preset.measurement != measurement:
+            continue
+        if analysis and preset.analysis != analysis:
             continue
         out.append((preset.name, path))
     return sorted(out, key=lambda item: item[0].lower())

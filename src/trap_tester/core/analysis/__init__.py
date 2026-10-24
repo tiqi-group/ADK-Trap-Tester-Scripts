@@ -30,6 +30,10 @@ STATUS_INFO: dict[str, tuple[str, str]] = {
     "not_detected": ("Not detected", "#6b6b6b"),
     "shorted": ("Shorted", "#c0392b"),
     "high_impedance": ("High impedance", "#8e44ad"),
+    # loopback mode (see loopback_analysis): how many filters a pin sees
+    "loop_open": ("Loop open", "#2e86c1"),
+    "extra_short": ("Extra short", "#c2185b"),
+    "pair_mismatch": ("Pair mismatch", "#7d6608"),
 }
 
 
@@ -64,6 +68,11 @@ class AnalysisResult:
     findings: list[Finding]
     value_label: str  # y-axis label for the visualiser
     params: dict[str, Any] = field(default_factory=dict)
+    # Which analysis mode produced this (an AnalysisMode.key); stamped by analyse().
+    mode: str = ""
+    # Problems with the analysis inputs rather than the board (e.g. a loopback
+    # pad the mapping does not name). Shown above the findings in the report.
+    warnings: list[str] = field(default_factory=list)
     # The band every pin shares, shaded across the plot. ``None`` when a golden
     # reference gives each pin its own — those are drawn per point from
     # ``Finding.limits`` instead.
@@ -104,6 +113,7 @@ def render_report(result: AnalysisResult, source_name: str = "") -> str:
             lines.append(f"  {key} = {value}")
         lines.append("")
 
+    lines.extend(_warning_lines(result))
     faults = [f for f in result.findings if f.status != "ok"]
     if faults:
         lines.append(f"Findings ({len(faults)}):")
@@ -123,6 +133,17 @@ def render_report(result: AnalysisResult, source_name: str = "") -> str:
     if out_of_band:
         lines.append(out_of_band)
     return "\n".join(lines)
+
+
+def _warning_lines(result: AnalysisResult) -> list[str]:
+    """The report's warnings block (problems with the inputs), or nothing."""
+    if not result.warnings:
+        return []
+    return [
+        f"Warnings ({len(result.warnings)}):",
+        *(f"  {warning}" for warning in result.warnings),
+        "",
+    ]
 
 
 def _out_of_band_line(result: AnalysisResult) -> str:
@@ -153,6 +174,11 @@ from trap_tester.core.analysis.filter_analysis import (  # noqa: E402
     FilterAnalysisSettings,
     analyse_filter,
 )
+from trap_tester.core.analysis.loopback import LoopbackPairs  # noqa: E402
+from trap_tester.core.analysis.loopback_analysis import (  # noqa: E402
+    LoopbackAnalysisSettings,
+    analyse_loopback,
+)
 from trap_tester.core.analysis.quantities import (  # noqa: E402
     Quantity,
     primary_quantity,
@@ -167,11 +193,48 @@ from trap_tester.core.analysis.voltage_analysis import (  # noqa: E402
     analyse_voltage,
 )
 
-# measurement key (== script stem) -> (analysis-settings dataclass, analyse fn)
-ANALYSES: dict[str, tuple[type, Callable[[pd.DataFrame, Any], AnalysisResult]]] = {
-    "measure_filter": (FilterAnalysisSettings, analyse_filter),
-    "measure_resistance": (ResistanceAnalysisSettings, analyse_resistance),
-    "measure_voltage": (VoltageAnalysisSettings, analyse_voltage),
+DEFAULT_MODE = "standard"
+
+
+@dataclass(frozen=True)
+class AnalysisMode:
+    """One way of analysing a measurement's results.
+
+    A measurement can be read more than one way — a ``measure_filter`` run is a
+    plain filter characterisation, or, with a loopback PCB fitted, a check that
+    pads come back in pairs. The mode is chosen in the Analysis panel and
+    recorded in a preset; it is never inferred from the result file, so one
+    result can be analysed either way.
+    """
+
+    key: str  # recorded in presets as "analysis"; unique per measurement
+    label: str  # shown in the panel's Mode selector
+    settings: type  # the analysis-settings dataclass
+    run: Callable[..., AnalysisResult]  # (df, settings[, mapping]) -> result
+    # The mode needs the selected cross-interface mapping as an input, so the
+    # panel's mapping choice changes the verdict, not just the picture.
+    needs_mapping: bool = False
+
+
+# measurement key (== script stem) -> its analysis modes, the default first
+ANALYSES: dict[str, list[AnalysisMode]] = {
+    "measure_filter": [
+        AnalysisMode(DEFAULT_MODE, "Standard", FilterAnalysisSettings, analyse_filter),
+        AnalysisMode(
+            "loopback", "Loopback (paired pads)", LoopbackAnalysisSettings,
+            analyse_loopback, needs_mapping=True,
+        ),
+    ],
+    "measure_resistance": [
+        AnalysisMode(
+            DEFAULT_MODE, "Standard", ResistanceAnalysisSettings, analyse_resistance
+        ),
+    ],
+    "measure_voltage": [
+        AnalysisMode(
+            DEFAULT_MODE, "Standard", VoltageAnalysisSettings, analyse_voltage
+        ),
+    ],
 }
 
 
@@ -179,20 +242,63 @@ def has_analysis(measurement: str | None) -> bool:
     return (measurement or "") in ANALYSES
 
 
-def analysis_settings_for(measurement: str | None) -> type | None:
-    entry = ANALYSES.get(measurement or "")
-    return entry[0] if entry else None
+def analysis_modes(measurement: str | None) -> list[AnalysisMode]:
+    """Every mode registered for a measurement, the default first (or none)."""
+    return ANALYSES.get(measurement or "", [])
 
 
-def analyse(measurement: str | None, df: pd.DataFrame, settings: Any) -> AnalysisResult:
-    """Run the analysis registered for ``measurement`` on ``df``.
+def analysis_mode(
+    measurement: str | None, mode: str | None = None
+) -> AnalysisMode | None:
+    """One mode of a measurement — the default when ``mode`` is ``None``.
 
-    Raises ``KeyError`` if no analysis is registered for the measurement.
+    ``None`` is returned for an unknown measurement *or* an unknown mode key, so a
+    preset naming a mode this build does not have is rejected, not re-read as
+    the default.
     """
-    entry = ANALYSES.get(measurement or "")
+    modes = analysis_modes(measurement)
+    if not modes:
+        return None
+    if mode is None:
+        return modes[0]
+    return next((m for m in modes if m.key == mode), None)
+
+
+def analysis_settings_for(
+    measurement: str | None, mode: str | None = None
+) -> type | None:
+    entry = analysis_mode(measurement, mode)
+    return entry.settings if entry else None
+
+
+def mode_of_settings(measurement: str | None, settings: Any) -> str | None:
+    """The key of the mode whose settings class ``settings`` is an instance of."""
+    for m in analysis_modes(measurement):
+        if type(settings) is m.settings:
+            return m.key
+    return None
+
+
+def analyse(
+    measurement: str | None, df: pd.DataFrame, settings: Any,
+    mode: str | None = None, mapping: Any = None,
+) -> AnalysisResult:
+    """Run one analysis mode (the default unless ``mode`` is given) on ``df``.
+
+    ``mapping`` is the selected cross-interface mapping; only modes that declare
+    ``needs_mapping`` receive it. Raises ``KeyError`` if no such analysis exists.
+    """
+    entry = analysis_mode(measurement, mode)
     if entry is None:
-        raise KeyError(f"No analysis available for measurement {measurement!r}")
-    return entry[1](df, settings)
+        raise KeyError(
+            f"No analysis {mode or DEFAULT_MODE!r} for measurement {measurement!r}"
+        )
+    if entry.needs_mapping:
+        result = entry.run(df, settings, mapping)
+    else:
+        result = entry.run(df, settings)
+    result.mode = entry.key
+    return result
 
 
 __all__ = [
@@ -208,13 +314,21 @@ __all__ = [
     "reference_key",
     "render_report",
     "ANALYSES",
+    "DEFAULT_MODE",
+    "AnalysisMode",
     "has_analysis",
+    "analysis_mode",
+    "analysis_modes",
     "analysis_settings_for",
+    "mode_of_settings",
     "analyse",
     "FilterAnalysisSettings",
+    "LoopbackAnalysisSettings",
+    "LoopbackPairs",
     "ResistanceAnalysisSettings",
     "VoltageAnalysisSettings",
     "analyse_filter",
+    "analyse_loopback",
     "analyse_resistance",
     "analyse_voltage",
 ]

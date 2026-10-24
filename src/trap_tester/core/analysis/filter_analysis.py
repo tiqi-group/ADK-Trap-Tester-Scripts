@@ -84,48 +84,81 @@ class FilterAnalysisSettings(AcceptanceSettings):
         return data
 
 
-def analyse_filter(df: pd.DataFrame, s: FilterAnalysisSettings):
-    from trap_tester.core.analysis import AnalysisResult, Finding
+@dataclass
+class FilterRow:
+    """One row of a ``measure_filter`` result, read and described once."""
 
+    connector: int
+    pin: int
+    shorted: bool
+    c_nf: float
+    r_ohm: float
+    fpc: int | None
+    where: str  # "pin 3 / FPC conductor 7 on connector 0", for messages
+    plotted: float  # the C to plot: NaN for a skipped point (C = -1)
+
+
+def read_filter_rows(df: pd.DataFrame) -> list[FilterRow]:
+    """Every row of a filter result (raises if a required column is missing)."""
     require_columns(df, _COLUMNS)
-    findings: list[Finding] = []
-
+    rows: list[FilterRow] = []
     for _, row in df.iterrows():
         connector = int(row["DSUB connector"])
         pin = int(row["DSUB pin"])
-        shorted = bool(row["Shorted"])
         c_nf = float(row["C_filter_nF"])
-        r_ohm = float(row["R_filter_Ohm"])
         fpc = fpc_conductor(pin)
-        where = f"pin {pin} / FPC conductor {fpc} on connector {connector}"
-        # C = -1 marks a skipped/short point; it must not be plotted as a value.
-        plotted = c_nf if c_nf >= 0 else np.nan
-        measured = {"values": {"c": c_nf, "r": r_ohm}}
+        rows.append(FilterRow(
+            connector=connector,
+            pin=pin,
+            shorted=bool(row["Shorted"]),
+            c_nf=c_nf,
+            r_ohm=float(row["R_filter_Ohm"]),
+            fpc=fpc,
+            where=f"pin {pin} / FPC conductor {fpc} on connector {connector}",
+            # C = -1 marks a skipped/short point; it must not be plotted as a value.
+            plotted=c_nf if c_nf >= 0 else np.nan,
+        ))
+    return rows
 
-        if shorted:
-            # DC current flows through the channel -> electrode shorted to GND.
-            findings.append(
-                Finding(
-                    connector, pin, fpc, plotted, "shorted",
-                    f"Shorted to GND {where} (R {r_ohm:.4g} Ohm)", **measured,
-                )
-            )
-            continue
-        if c_nf < s.min_c_abs_nf:
-            # No capacitance seen -> the filter is open / disconnected.
-            findings.append(
-                Finding(
-                    connector, pin, fpc, plotted, "not_detected",
-                    f"Cap not detected (open/disconnected) on {where}", **measured,
-                )
-            )
-            continue
 
-        verdicts = s.judge_all({"c": c_nf, "r": r_ohm}, connector, pin)
+def precheck(row: FilterRow, min_c_abs_nf: float):
+    """The verdicts that come before any band: shorted, or no cap detected.
+
+    Returns the :class:`~trap_tester.core.analysis.Finding` for such a point, or
+    ``None`` when the point has a capacitance worth judging.
+    """
+    from trap_tester.core.analysis import Finding
+
+    measured = {"values": {"c": row.c_nf, "r": row.r_ohm}}
+    if row.shorted:
+        # DC current flows through the channel -> electrode shorted to GND.
+        return Finding(
+            row.connector, row.pin, row.fpc, row.plotted, "shorted",
+            f"Shorted to GND {row.where} (R {row.r_ohm:.4g} Ohm)", **measured,
+        )
+    if row.c_nf < min_c_abs_nf:
+        # No capacitance seen -> the filter is open / disconnected.
+        return Finding(
+            row.connector, row.pin, row.fpc, row.plotted, "not_detected",
+            f"Cap not detected (open/disconnected) on {row.where}", **measured,
+        )
+    return None
+
+
+def analyse_filter(df: pd.DataFrame, s: FilterAnalysisSettings):
+    from trap_tester.core.analysis import AnalysisResult, Finding
+
+    findings: list[Finding] = []
+    for row in read_filter_rows(df):
+        early = precheck(row, s.min_c_abs_nf)
+        if early is not None:
+            findings.append(early)
+            continue
+        verdicts = s.judge_all({"c": row.c_nf, "r": row.r_ohm}, row.connector, row.pin)
         findings.append(
             Finding(
-                connector, pin, fpc, plotted, overall_status(verdicts),
-                message_for(where, verdicts), **finding_fields(verdicts),
+                row.connector, row.pin, row.fpc, row.plotted, overall_status(verdicts),
+                message_for(row.where, verdicts), **finding_fields(verdicts),
             )
         )
 

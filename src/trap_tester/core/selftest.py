@@ -25,6 +25,7 @@ from typing import Any
 import numpy as np
 import pandas as pd
 
+from trap_tester.core.measurements._capture import triggered_capture
 from trap_tester.core.reporter import MeasurementContext
 from trap_tester.utils import (
     DSUB_GND_PIN,
@@ -37,6 +38,7 @@ from trap_tester.utils import (
 )
 
 _EXPECTED_CURRENT_UA = 191.0  # nominal loopback current on real hardware
+_CURRENT_SQUARE_HZ = 1.0  # current-check square wave: up to one period per edge
 
 
 # --------------------------------------------------------------------------- #
@@ -135,6 +137,9 @@ class SelfTestSettings:
     f_sample: float = 1e6  # scope sample rate [Hz]
     buffer_size: int = 8192  # samples per capture (== 4096 * 2 in the original)
     run_current_check: bool = True  # also run the current-measurement sanity check
+    # seconds to wait for a trigger before a pin is recorded as "no trigger"
+    # (<= 0 waits forever); Stop aborts the wait either way
+    trigger_timeout: float = 1.0
 
 
 _COLUMNS = ["DSUB pin", "Correlation"]
@@ -177,15 +182,22 @@ def _current_check(scope, wavegen, io, ctx, s: SelfTestSettings) -> None:
     scope[0].setup(range=5.0)
     scope[1].setup(range=5.0)
     wavegen[0].setup(
-        frequency=1, function="square", offset=0.5, amplitude=0.5, start=True
+        frequency=_CURRENT_SQUARE_HZ, function="square", offset=0.5, amplitude=0.5,
+        start=True,
     )
     scope.setup_edge_trigger(
         mode="normal", channel=1, slope="rising", level=0.1, hysteresis=0.01
     )
     t.sleep(0.5)
-    scope.single(
-        sample_rate=s.f_sample, buffer_size=s.buffer_size, configure=True, start=True
+    # the next rising edge can be a full square period away, so allow for it
+    timeout = s.trigger_timeout + 1 / _CURRENT_SQUARE_HZ if s.trigger_timeout > 0 else 0
+    status = triggered_capture(
+        scope, ctx, sample_rate=s.f_sample, buffer_size=s.buffer_size, timeout=timeout
     )
+    if status != "done":
+        if status == "timeout":
+            ctx.report.log(f"No trigger within {timeout:g} s — current check skipped.")
+        return
     raw_i = np.asarray(scope[1].get_data(), dtype=float)
     ctx.report.capture(scope[0].get_data(), scope[1].get_data(), s.f_sample)
 
@@ -197,6 +209,46 @@ def _current_check(scope, wavegen, io, ctx, s: SelfTestSettings) -> None:
         f"Expected current: {_EXPECTED_CURRENT_UA:.0f} uA, "
         f"measured: {avg_current:.2f} uA (rel. error {rel_err:.4f})"
     )
+
+
+def _loopback_pin(pin, io, wavegen, scope, ctx, s: SelfTestSettings) -> float | None:
+    """Loopback correlation on one DSUB pin.
+
+    Returns NaN when the scope never triggered (no loopback signal: not measured,
+    but it still counts against the pass threshold) and None when cancelled.
+    """
+    set_adc(io, pin)
+    set_dac(io, pin)
+    scope[0].setup(range=5.0)
+    scope[1].setup(range=5.0)
+    scope.setup_edge_trigger(
+        mode="normal", channel=0, slope="rising", level=0.1, hysteresis=0.01
+    )
+    wavegen[0].setup(function="sine", offset=0.5, amplitude=0.5, start=True)
+    t.sleep(0.1)
+    status = triggered_capture(
+        scope, ctx, sample_rate=s.f_sample, buffer_size=s.buffer_size,
+        timeout=s.trigger_timeout,
+    )
+    if status == "cancelled":
+        return None
+    t.sleep(0.1)
+    wavegen[0].setup(function="sine", offset=0.0, amplitude=0.0, start=True)
+
+    if status == "timeout":
+        ctx.report.log(
+            f"No trigger on DSUB pin {pin} within {s.trigger_timeout:g} s"
+            "  <-- faulty connection"
+        )
+        return float("nan")
+
+    ch1 = scope[0].get_data()
+    ch2 = scope[1].get_data()
+    ctx.report.capture(ch1, ch2, s.f_sample)
+    corr = _correlation(ch1, ch2)
+    note = "" if corr >= s.corr_threshold else "  <-- faulty connection"
+    ctx.report.log(f"Correlation on DSUB pin {pin}: {corr:.4f}{note}")
+    return corr
 
 
 def run_frontend_selftest(ctx: MeasurementContext) -> pd.DataFrame:
@@ -213,31 +265,14 @@ def run_frontend_selftest(ctx: MeasurementContext) -> pd.DataFrame:
             continue
 
         ctx.report.status(f"Self-test — loopback correlation, pin {pin}/50")
-        set_adc(io, pin)
-        set_dac(io, pin)
-        scope[0].setup(range=5.0)
-        scope[1].setup(range=5.0)
-        scope.setup_edge_trigger(
-            mode="normal", channel=0, slope="rising", level=0.1, hysteresis=0.01
-        )
-        wavegen[0].setup(function="sine", offset=0.5, amplitude=0.5, start=True)
-        t.sleep(0.1)
-        scope.single(
-            sample_rate=s.f_sample, buffer_size=s.buffer_size, configure=True, start=True
-        )
-        t.sleep(0.1)
-        wavegen[0].setup(function="sine", offset=0.0, amplitude=0.0, start=True)
-
-        ch1 = scope[0].get_data()
-        ch2 = scope[1].get_data()
-        ctx.report.capture(ch1, ch2, s.f_sample)
-        corr = _correlation(ch1, ch2)
+        corr = _loopback_pin(pin, io, wavegen, scope, ctx, s)
+        if corr is None:
+            ctx.report.status("Cancelled")
+            break
 
         row = dict(zip(_COLUMNS, [pin, corr]))
         results.append(row)
         ctx.report.result(row)
-        note = "" if corr >= s.corr_threshold else "  <-- faulty connection"
-        ctx.report.log(f"Correlation on DSUB pin {pin}: {corr:.4f}{note}")
 
     if s.run_current_check and not ctx.should_cancel():
         _current_check(scope, wavegen, io, ctx, s)
@@ -245,7 +280,10 @@ def run_frontend_selftest(ctx: MeasurementContext) -> pd.DataFrame:
     ctx.device.analog_io[0][0].value = False  # drop the 5V supply
 
     df = pd.DataFrame(results, columns=_COLUMNS)
-    bad = df[df["Correlation"] < s.corr_threshold] if not df.empty else df
+    if ctx.should_cancel():
+        return df  # keep the "Cancelled" status rather than a "done" summary
+    # negated >= so an untriggered (NaN) pin counts as bad
+    bad = df[~(df["Correlation"] >= s.corr_threshold)] if not df.empty else df
     ctx.report.status(
         f"Self-test done — {len(df)} pins, {len(bad)} below "
         f"threshold {s.corr_threshold}"

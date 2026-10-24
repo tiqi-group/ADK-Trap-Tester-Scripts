@@ -167,6 +167,48 @@ This script tries to characterize an attached RC filter. The general ideas and c
 
 The scripts in this section can be seen as inspiration to come up with own scripts. As they are potentially setup-specific we omit further descriptions of the contained scripts.
 
+### Loopback mode (filter measurement)
+
+An interface such as the interposer can be tested by fitting a loopback PCB that
+shorts its pads in pairs. A filter measurement through a working interface then
+charges *two* filter capacitors per pin and reads about twice the nominal C (see
+"Shorts between Electrodes" in the frontend README). In the Analysis panel, load
+a `measure_filter` result and set **Mode** to *Loopback (paired pads)*:
+
+| Pin | Reading (C / nominal) | Verdict |
+| --- | --- | --- |
+| paired | ~2× | OK |
+| paired | ~1× | Loop open — the interface does not connect |
+| paired | >2× | Extra short |
+| unpaired | ~1× | OK |
+| unpaired | >1× | Extra short |
+| either pin of a pair | the two pins disagree | Pair mismatch — re-measure |
+
+The cut-offs sit half-way between filter counts (1.5× and 2.5× by default), so
+normal capacitor spread cannot blur 1× into 2×. Shorted and not-detected pins,
+and the filter resistance window, are judged as in the standard mode.
+
+Which pads are paired is a small JSON file, loaded with **Load pairs…** and kept
+in a preset with **Save as…**:
+
+```json
+{
+  "schema": 1,
+  "kind": "loopback-pairs",
+  "name": "Interposer loopback PCB",
+  "source": "loopback-pcb rev A",
+  "interface": "interposer",
+  "pairs": [["A3", "B7"], ["C1", "C2"]]
+}
+```
+
+Pads are named on one interface (`interface` is that layout's slug, i.e. the
+mapping CSV's column header). The file holds no tester pins: each pad's
+`(connector, pin)` comes from the **Mapping** selected in the panel, so one pairs
+file serves every cabling. In this mode the mapping changes the verdict, so
+changing it re-runs the analysis, and any paired pad the mapping does not name is
+shown as a warning above the view rather than guessed.
+
 ## Custom interface layouts
 
 The Analysis and Interfaces panels can draw a measurement (or manual pin
