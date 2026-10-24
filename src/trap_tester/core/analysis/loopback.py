@@ -1,25 +1,30 @@
-"""Loopback pairs: which interface pads a loopback PCB shorts together.
+"""Loopback boards: which interface pads a loopback PCB joins, and which it grounds.
 
-Fitting a loopback PCB to an interface (e.g. the interposer) shorts its pads in
-pairs, so a filter measurement through a working interface charges *two* filter
-capacitors per pin and reads about twice the nominal C (see the AFE README,
-"Shorts between Electrodes"). The pairs file says which pads are paired::
+Fitting a loopback PCB to an interface (e.g. the interposer) shorts its pads
+together, so a filter measurement through a working interface charges every
+filter capacitor of a joined group at once: a pin in a group of *n* pads reads
+about *n* times the nominal C (see the AFE README, "Shorts between Electrodes").
+Most groups are pairs; a heater's force/sense pads are a group joined through the
+heating element. Pads the board ties to ground should read as shorted. The board
+file says which is which::
 
     {
       "schema": 1,
-      "kind": "loopback-pairs",
+      "kind": "loopback",
       "name": "Interposer loopback PCB",
       "source": "loopback-pcb rev A",
       "interface": "interposer",
-      "pairs": [["A3", "B7"], ["C1", "C2"]]
+      "groups": [["A3", "B7"], ["N9", "N18"]],
+      "gnd": ["C3", "D4"]
     }
 
-Pads are named on one interface — ``interface`` is that layout's slug, i.e. the
-mapping CSV's column header. The file deliberately holds **no tester address**:
-the same loopback PCB is tested through many cablings, so each pad's
-``(connector, pin)`` comes from the selected mapping at analysis time
-(:func:`resolve_pairs`). Anything the mapping cannot resolve is reported as a
-problem, never guessed.
+List only pads that carry a filter channel: a group's size *is* the number of
+filters a pin of it should see. Pads are named on one interface — ``interface``
+is that layout's slug, i.e. the mapping CSV's column header. The file
+deliberately holds **no tester address**: the same board is tested through many
+cablings, so each pad's ``(connector, pin)`` comes from the selected mapping at
+analysis time (:func:`resolve_board`). Anything the mapping cannot resolve is
+reported as a problem, never guessed.
 """
 
 from __future__ import annotations
@@ -39,32 +44,38 @@ if TYPE_CHECKING:
     from trap_tester.core.layout.mapping import Mapping
 
 SCHEMA_VERSION = 1
-KIND = "loopback-pairs"
+KIND = "loopback"
 
 Address = tuple[int, int]  # (connector, pin)
 
 _MAX_LISTED = 10  # pads named in one problem line before it says "… and N more"
+_MIN_GROUP = 2
 
 
 @dataclass
-class LoopbackPairs:
-    """The pad pairs one loopback PCB shorts together, on one interface."""
+class LoopbackBoard:
+    """What one loopback PCB does to an interface: pad groups and grounded pads."""
 
     interface: str = ""  # layout slug == mapping column header (normalised)
-    pairs: list[tuple[str, str]] = field(default_factory=list)
+    groups: list[tuple[str, ...]] = field(default_factory=list)
+    gnd: list[str] = field(default_factory=list)  # pads the board shorts to GND
     name: str = ""
     source: str = ""
 
     def __bool__(self) -> bool:
-        return bool(self.pairs)
+        return bool(self.groups or self.gnd)
 
     def describe(self) -> str:
-        if not self.pairs:
+        if not self:
             return "none loaded"
-        text = f"{len(self.pairs)} pair(s) on '{self.interface}'"
-        if self.name:
-            text = f"{self.name}: {text}"
-        return text
+        n_pairs = sum(1 for g in self.groups if len(g) == _MIN_GROUP)
+        parts = [f"{len(self.groups)} group(s)"]
+        if n_pairs != len(self.groups):
+            parts[0] += f" ({n_pairs} pairs)"
+        if self.gnd:
+            parts.append(f"{len(self.gnd)} GND pad(s)")
+        text = f"{', '.join(parts)} on '{self.interface}'"
+        return f"{self.name}: {text}" if self.name else text
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -73,129 +84,125 @@ class LoopbackPairs:
             "name": self.name,
             "source": self.source,
             "interface": self.interface,
-            "pairs": [list(pair) for pair in self.pairs],
+            "groups": [list(group) for group in self.groups],
+            "gnd": list(self.gnd),
         }
 
     @classmethod
-    def from_dict(cls, data: Any) -> LoopbackPairs:
-        """Validate and build. Empty or missing data is an empty set of pairs.
+    def from_dict(cls, data: Any) -> LoopbackBoard:
+        """Validate and build. Empty or missing data is an empty board.
 
-        Raises :class:`ValueError` naming the fix for anything malformed — a
-        pairs table is acceptance data, so a silently dropped pair would turn a
-        broken loop into an "unpaired" pin that passes.
+        Raises :class:`ValueError` naming the fix for anything malformed — this
+        is acceptance data, so a silently dropped group would turn a broken loop
+        into an "ungrouped" pin that passes.
         """
-        if isinstance(data, LoopbackPairs):
+        if isinstance(data, LoopbackBoard):
             return data
         if not data:
             return cls()
         _check_header(data)
         interface = normalize_header(str(data.get("interface") or ""))
-        raw_pairs = data.get("pairs") or []
-        if raw_pairs and not interface:
+        raw_groups = data.get("groups") or []
+        raw_gnd = data.get("gnd") or []
+        if not isinstance(raw_groups, list) or not isinstance(raw_gnd, list):
+            raise ValueError("'groups' must list pad lists and 'gnd' must list pads")
+        if (raw_groups or raw_gnd) and not interface:
             raise ValueError(
                 "'interface' is missing: name the layout slug (the mapping CSV "
                 'column) the pads are named on, e.g. "interposer"'
             )
-        if not isinstance(raw_pairs, list):
-            raise ValueError("'pairs' must be a list of [pad, pad] pairs")
+        seen: dict[str, str] = {}  # pad -> where it was first named
+        groups = [_checked_group(i, raw, seen) for i, raw in enumerate(raw_groups)]
+        gnd = [_checked_pad("gnd", raw, seen) for raw in raw_gnd]
         return cls(
-            interface=interface,
-            pairs=_checked_pairs(raw_pairs),
-            name=str(data.get("name") or ""),
-            source=str(data.get("source") or ""),
+            interface=interface, groups=groups, gnd=gnd,
+            name=str(data.get("name") or ""), source=str(data.get("source") or ""),
         )
 
 
 def _check_header(data: Any) -> None:
-    """Reject anything that is not a loopback-pairs object this app can read."""
+    """Reject anything that is not a loopback-board object this app can read."""
     if not isinstance(data, dict):
-        raise ValueError("loopback pairs must be a JSON object")
+        raise ValueError("a loopback board must be a JSON object")
     kind = data.get("kind", KIND)
     if kind != KIND:
-        raise ValueError(f"not a loopback-pairs file (kind {kind!r})")
+        raise ValueError(f"not a loopback-board file (kind {kind!r}, not {KIND!r})")
     schema = data.get("schema", SCHEMA_VERSION)
     if not isinstance(schema, int) or schema > SCHEMA_VERSION:
         raise ValueError(
-            f"loopback-pairs schema {schema} is newer than this app supports "
+            f"loopback schema {schema} is newer than this app supports "
             f"(max {SCHEMA_VERSION})"
         )
 
 
-def _checked_pad(where: str, raw: Any) -> str:
+def _checked_pad(where: str, raw: Any, seen: dict[str, str]) -> str:
     if not isinstance(raw, str) or not normalize_ident(raw):
         raise ValueError(f"{where}: pad names must be non-empty strings")
     pad = normalize_ident(raw)
     if "," in pad or IDENT_SEPARATOR in pad:
         raise ValueError(f"{where}: pad {pad!r} contains a ',' or ';'")
+    if pad in seen:
+        raise ValueError(f"{where}: pad {pad!r} is already named in {seen[pad]}")
+    seen[pad] = where
     return pad
 
 
-def _checked_pairs(raw_pairs: list[Any]) -> list[tuple[str, str]]:
-    pairs: list[tuple[str, str]] = []
-    seen: dict[str, int] = {}  # pad -> index of the pair that names it
-    for i, raw in enumerate(raw_pairs):
-        where = f"pair {i + 1}"
-        if not isinstance(raw, list | tuple) or len(raw) != 2:  # noqa: PLR2004
-            raise ValueError(f"{where}: expected exactly two pads, got {raw!r}")
-        a, b = (_checked_pad(where, pad) for pad in raw)
-        if a == b:
-            raise ValueError(f"{where}: pad {a!r} is paired with itself")
-        for pad in (a, b):
-            if pad in seen:
-                raise ValueError(
-                    f"{where}: pad {pad!r} is already in pair {seen[pad] + 1}"
-                )
-            seen[pad] = i
-        pairs.append((a, b))
-    return pairs
+def _checked_group(index: int, raw: Any, seen: dict[str, str]) -> tuple[str, ...]:
+    where = f"group {index + 1}"
+    if not isinstance(raw, list | tuple) or len(raw) < _MIN_GROUP:
+        raise ValueError(f"{where}: a group joins at least two pads, got {raw!r}")
+    return tuple(_checked_pad(where, pad, seen) for pad in raw)
 
 
-def load_pairs(path: str | Path) -> LoopbackPairs:
-    """Read a pairs file; it must declare its kind (raises ValueError / OSError)."""
+def load_board(path: str | Path) -> LoopbackBoard:
+    """Read a board file; it must declare its kind (raises ValueError / OSError)."""
     path = Path(path)
     data = json.loads(path.read_text())
     if not isinstance(data, dict) or data.get("kind") != KIND:
-        raise ValueError(f"{path.name} is not a loopback-pairs file (kind {KIND!r})")
-    pairs = LoopbackPairs.from_dict(data)
-    if not pairs:
-        raise ValueError(f"{path.name} lists no pairs")
-    if not pairs.source:
-        pairs.source = path.name
-    return pairs
+        raise ValueError(f"{path.name} is not a loopback-board file (kind {KIND!r})")
+    board = LoopbackBoard.from_dict(data)
+    if not board:
+        raise ValueError(f"{path.name} lists no groups and no GND pads")
+    if not board.source:
+        board.source = path.name
+    return board
 
 
 # ---- resolution through a mapping ------------------------------------------
 @dataclass
-class PadLink:
-    """One paired pad, as resolved: its address and its partner's."""
+class Member:
+    """One grouped pad, as resolved: which group, and where its partners are."""
 
     pad: str
-    partner_pad: str
-    partner: Address | None  # None when the mapping cannot place the partner
+    group: int  # index into LoopbackBoard.groups
+    size: int  # pads in the group == filters a pin of it should see
+    # the other pads of the group, each with its address (None: mapping lacks it)
+    others: list[tuple[str, Address | None]]
 
 
 @dataclass
 class Resolution:
-    """The pairs placed on tester addresses, plus everything that did not resolve.
+    """The board placed on tester addresses, plus everything that did not resolve.
 
-    ``links`` holds every paired pad the mapping *could* place, keyed by its own
-    address — including pads whose partner did not resolve (``partner`` is then
-    ``None``), because such a pin is still on the loopback and must read 2x.
-    ``ok`` is False when nothing could be resolved at all (no mapping, or the
-    mapping lacks the interface column); the analysis then judges nothing.
+    ``members`` holds every grouped pad the mapping *could* place, keyed by its
+    own address — including pads whose partners did not resolve, because such a
+    pin is still on the loopback and must read its group's count. ``gnd`` maps
+    each placed ground pad's address to its name. ``ok`` is False when nothing
+    could be resolved at all (no mapping, or the mapping lacks the interface
+    column); the analysis then judges nothing.
     """
 
-    links: dict[Address, PadLink] = field(default_factory=dict)
+    members: dict[Address, Member] = field(default_factory=dict)
+    gnd: dict[Address, str] = field(default_factory=dict)
     problems: list[str] = field(default_factory=list)
     ok: bool = True
 
-    def pairs(self) -> list[tuple[Address, Address]]:
-        """Each fully resolved pair once, as ``(address, partner address)``."""
-        out: list[tuple[Address, Address]] = []
-        for addr, link in self.links.items():
-            if link.partner is not None and addr < link.partner:
-                out.append((addr, link.partner))
-        return out
+    def groups(self) -> list[list[Address]]:
+        """Each group's placed addresses, in board order (groups with ≥2 only)."""
+        by_group: dict[int, list[Address]] = {}
+        for addr, member in self.members.items():
+            by_group.setdefault(member.group, []).append(addr)
+        return [a for _, a in sorted(by_group.items()) if len(a) >= _MIN_GROUP]
 
 
 def _listed(items: list[str]) -> str:
@@ -204,89 +211,97 @@ def _listed(items: list[str]) -> str:
     return f"{shown} … and {extra} more" if extra > 0 else shown
 
 
-def resolve_pairs(pairs: LoopbackPairs, mapping: Mapping | None) -> Resolution:
-    """Place every paired pad on its ``(connector, pin)`` via ``mapping``.
+class _Claims:
+    """Hands out tester addresses, reporting any address two pads both want."""
 
-    Problems reported (each also leaves the affected pad or pair unresolved):
+    def __init__(self, address: dict[str, Address], res: Resolution, name: str):
+        self._address = address
+        self._res = res
+        self._name = name
+        self._claimed: dict[Address, str] = {}  # address -> the pad that took it
+
+    def __call__(self, pad: str) -> Address | None:
+        own = self._address.get(pad)
+        if own is None:
+            return None
+        if own in self._claimed:
+            self._res.problems.append(
+                f"Connector {own[0]} pin {own[1]} is claimed by pads "
+                f"{self._claimed[own]} and {pad} (one net in mapping '{self._name}')."
+            )
+            return None
+        self._claimed[own] = pad
+        return own
+
+
+def _unusable_mapping(board: LoopbackBoard, mapping: Mapping | None) -> str:
+    """Why ``mapping`` cannot place any of the board's pads ("" when it can)."""
+    if mapping is None:
+        return (
+            "No mapping selected — loopback pads are named on "
+            f"'{board.interface}' and need a mapping to find their tester pins."
+        )
+    if board.interface not in mapping.interfaces:
+        return (
+            f"Mapping '{mapping.name}' has no '{board.interface}' column "
+            f"(it names: {', '.join(mapping.interfaces) or 'nothing'})."
+        )
+    return ""
+
+
+def resolve_board(board: LoopbackBoard, mapping: Mapping | None) -> Resolution:
+    """Place every grouped and grounded pad on its ``(connector, pin)``.
+
+    Problems reported (each also leaves the affected pad unresolved):
 
     * no mapping selected, or the mapping has no column for the interface;
     * pads the mapping does not name;
-    * a pair whose two pads are the same net in the mapping;
-    * one tester address claimed by two pads.
+    * one tester address claimed by two pads (e.g. two pads of a group that are
+      the same net in the mapping).
     """
-    if mapping is None:
-        return Resolution(
-            problems=[
-                "No mapping selected — loopback pads are named on "
-                f"'{pairs.interface}' and need a mapping to find their tester pins."
-            ],
-            ok=False,
-        )
-    if pairs.interface not in mapping.interfaces:
-        return Resolution(
-            problems=[
-                f"Mapping '{mapping.name}' has no '{pairs.interface}' column "
-                f"(it names: {', '.join(mapping.interfaces) or 'nothing'})."
-            ],
-            ok=False,
-        )
+    unusable = _unusable_mapping(board, mapping)
+    if unusable:
+        return Resolution(problems=[unusable], ok=False)
+    assert mapping is not None  # narrowed by _unusable_mapping
 
-    nets = mapping.idents_for(pairs.interface)
-    address: dict[str, Address] = {
-        pad: (nets[pad].connector, nets[pad].pin)
-        for pair in pairs.pairs
-        for pad in pair
-        if pad in nets
-    }
+    nets = mapping.idents_for(board.interface)
+    address = {pad: (net.connector, net.pin) for pad, net in nets.items()}
     res = Resolution()
-
-    missing = [pad for pair in pairs.pairs for pad in pair if pad not in address]
+    named = [pad for group in board.groups for pad in group] + list(board.gnd)
+    missing = [pad for pad in named if pad not in address]
     if missing:
         res.problems.append(
-            f"{len(missing)} paired pad(s) not in mapping '{mapping.name}': "
+            f"{len(missing)} loopback pad(s) not in mapping '{mapping.name}': "
             f"{_listed(missing)}"
         )
 
-    claimed: dict[Address, str] = {}  # address -> the pad that took it first
-    for a, b in pairs.pairs:
-        addr_a, addr_b = address.get(a), address.get(b)
-        if addr_a is not None and addr_a == addr_b:
-            res.problems.append(
-                f"Pair {a}/{b}: both pads are the same net (connector "
-                f"{addr_a[0]}, pin {addr_a[1]}) in mapping '{mapping.name}'."
-            )
-            continue
-        _link(res, claimed, (a, addr_a), (b, addr_b))
-        _link(res, claimed, (b, addr_b), (a, addr_a))
+    _place(board, address, res, _Claims(address, res, mapping.name))
     return res
 
 
-def _link(
-    res: Resolution, claimed: dict[Address, str],
-    this: tuple[str, Address | None], other: tuple[str, Address | None],
+def _place(
+    board: LoopbackBoard, address: dict[str, Address], res: Resolution, claim: _Claims
 ) -> None:
-    """Record one paired pad at its address, unless another pad already holds it."""
-    pad, own = this
-    partner_pad, partner = other
-    if own is None:
-        return
-    if own in claimed:
-        res.problems.append(
-            f"Connector {own[0]} pin {own[1]} is claimed by pads "
-            f"{claimed[own]} and {pad}."
-        )
-        return
-    claimed[own] = pad
-    res.links[own] = PadLink(pad, partner_pad, partner)
+    """Record every grouped and grounded pad at the address it can claim."""
+    for g, group in enumerate(board.groups):
+        for pad in group:
+            own = claim(pad)
+            if own is not None:
+                others = [(o, address.get(o)) for o in group if o != pad]
+                res.members[own] = Member(pad, g, len(group), others)
+    for pad in board.gnd:
+        own = claim(pad)
+        if own is not None:
+            res.gnd[own] = pad
 
 
 __all__ = [
     "KIND",
     "SCHEMA_VERSION",
     "Address",
-    "LoopbackPairs",
-    "PadLink",
+    "LoopbackBoard",
+    "Member",
     "Resolution",
-    "load_pairs",
-    "resolve_pairs",
+    "load_board",
+    "resolve_board",
 ]

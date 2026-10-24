@@ -399,6 +399,30 @@ def slot_pins(
     ]
 
 
+# Drawing pairs (links) follows the loopback pictures the original interposer
+# analysis made: pads at ~0.28 of the pitch with an outline just outside them,
+# so neighbouring outlines keep a clear gap. Layouts draw pads larger than that
+# (the interposer at 0.42), so with links present the pads shrink to this share
+# of their radius, and the outline sits at LINK_RADIUS_SCALE of the original.
+LINKED_PAD_SCALE = 2 / 3
+LINK_RADIUS_SCALE = 0.75
+
+
+@dataclass
+class Link:
+    """Two pads joined by the setup (e.g. a loopback pair), drawn as one outline.
+
+    The outline is a stadium: straight sides at ``r`` from the segment between
+    the two pad centres, closed by half-circles around each pad.
+    """
+
+    x1: float
+    y1: float
+    x2: float
+    y2: float
+    r: float
+
+
 @dataclass
 class Drawing:
     """A flat, renderer-ready picture: static background + coloured pins."""
@@ -406,6 +430,7 @@ class Drawing:
     title: str
     background: list[Any]
     pins: list[PinMark]
+    links: list[Link] = field(default_factory=list)
 
     def pad_classes(self) -> set[str]:
         """Which pad classes this drawing contains (drives the legend)."""
@@ -422,6 +447,9 @@ class Drawing:
             else:
                 xs += [p.x - p.r, p.x + p.r]
                 ys += [p.y - p.r, p.y + p.r]
+        for link in self.links:
+            xs += [min(link.x1, link.x2) - link.r, max(link.x1, link.x2) + link.r]
+            ys += [min(link.y1, link.y2) - link.r, max(link.y1, link.y2) + link.r]
         for prim in self.background:
             if isinstance(prim, Circle):
                 xs += [prim.x - prim.r, prim.x + prim.r]
@@ -488,16 +516,72 @@ def build_drawing(result: AnalysisResult, layout: InterfaceLayout) -> Drawing:
                 measured=False,
             )
 
-    return Drawing(title=result.title, background=list(layout.background), pins=pins)
+    links = _links(result, layout)
+    if links:
+        _make_room_for_links(pins)
+    return Drawing(
+        title=result.title, background=list(layout.background), pins=pins,
+        links=links,
+    )
+
+
+def _make_room_for_links(pins: list[PinMark]) -> None:
+    """Shrink the pads so link outlines fit around them with a gap between."""
+    for pin in pins:
+        if pin.shape != "poly":  # an electrode outline cannot shrink in place
+            pin.r *= LINKED_PAD_SCALE
+
+
+def _links(result: AnalysisResult, layout: InterfaceLayout) -> list[Link]:
+    """Place the result's linked ``(connector, dsub_pin)`` pairs on ``layout``.
+
+    The result names DSUB pins; a layout keyed on another pin space (the FPC
+    ribbon) is reached through the findings, which carry both. A pair with an end
+    the layout does not draw is skipped.
+    """
+    links = getattr(result, "links", None) or []
+    if not links:
+        return []
+    place = _placer(result, layout)
+    out: list[Link] = []
+    for a, b in links:
+        sa, sb = place(a), place(b)
+        if sa is None or sb is None:
+            continue
+        out.append(Link(
+            sa.x, sa.y, sb.x, sb.y, LINK_RADIUS_SCALE * max(sa.r, sb.r)
+        ))
+    return out
+
+
+def _placer(result: AnalysisResult, layout: InterfaceLayout):
+    """``(connector, dsub_pin) -> SlotShape | None`` for ``layout``'s pin space."""
+    to_key: dict[tuple[int, int], int] = {}
+    for f in result.findings:
+        key = getattr(f, layout.pin_space, None)
+        if key is not None:
+            to_key[(int(f.connector), int(f.dsub_pin))] = int(key)
+    shape_at: dict[tuple[int, int], SlotShape] = {}
+    for slot in layout.slots:
+        shape_at.setdefault((slot.connector, slot.pin), next(slot.iter_shapes()))
+
+    def place(addr: tuple[int, int]) -> SlotShape | None:
+        key = addr[1] if layout.pin_space == "dsub_pin" else to_key.get(addr)
+        return None if key is None else shape_at.get((addr[0], key))
+
+    return place
 
 
 __all__ = [
+    "LINKED_PAD_SCALE",
+    "LINK_RADIUS_SCALE",
     "SCHEMA_VERSION",
     "UNMEASURED_FILL",
     "UNMEASURED_STROKE",
     "UNSET_PIN",
     "Drawing",
     "InterfaceLayout",
+    "Link",
     "PinMark",
     "Slot",
     "SlotShape",

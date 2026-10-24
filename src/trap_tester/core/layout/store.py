@@ -43,6 +43,9 @@ _APP_DIR = "trap-tester"
 _ENV_VAR = "TRAP_TESTER_LAYOUTS_DIR"
 _PATH_ENV_VAR = "TRAP_TESTER_LAYOUT_PATH"  # os.pathsep-separated extra read dirs
 _CONFIG_NAME = "layout_sources.json"
+# Loopback-board files may sit beside the layouts they refer to; this suffix keeps
+# them out of the layout selector (see core.analysis.loopback).
+LOOPBACK_SUFFIX = ".loopback.json"
 
 
 def _norm(path: Path) -> str:
@@ -170,12 +173,16 @@ def list_user_layouts() -> list[Path]:
     """Every ``*.json`` under all search dirs, recursively (sorted per dir).
 
     Discovery descends into sub-folders (``rglob``), so a search folder can be
-    organised into sub-directories (e.g. per trap / per project).
+    organised into sub-directories (e.g. per trap / per project). Loopback-board
+    files (``*.loopback.json``) are not layouts and are skipped.
     """
     out: list[Path] = []
     for directory in layout_search_dirs():
         if directory.exists():
-            out.extend(sorted(directory.rglob("*.json")))
+            out.extend(
+                path for path in sorted(directory.rglob("*.json"))
+                if not path.name.endswith(LOOPBACK_SUFFIX)
+            )
     return out
 
 
@@ -261,6 +268,7 @@ def delete_layout(path: str | Path) -> None:
 
 
 __all__ = [
+    "LOOPBACK_SUFFIX",
     "user_layouts_dir",
     "ensure_user_layouts_dir",
     "configured_layout_dirs",

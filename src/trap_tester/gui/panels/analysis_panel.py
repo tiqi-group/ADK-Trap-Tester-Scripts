@@ -48,7 +48,7 @@ from trap_tester.core import settings as settings_io
 from trap_tester.core.analysis import golden
 from trap_tester.core.analysis import presets as preset_store
 from trap_tester.core.analysis.acceptance import CAT_TOL, Reference
-from trap_tester.core.analysis.loopback import LoopbackPairs, load_pairs
+from trap_tester.core.analysis.loopback import LoopbackBoard, load_board
 from trap_tester.core.appconfig import analysis_dir, presets_dir, results_dir
 from trap_tester.core.layout import (
     InterfaceLayout,
@@ -147,8 +147,8 @@ class AnalysisPanel(QWidget):
         self._params_box.setProperty("role", "interactive")
         self._params_layout = QVBoxLayout(self._params_box)
         # How the result is read (mode), then where the criteria came from
-        # (preset + reference / pairs), above the numbers themselves; the form is
-        # appended after it.
+        # (preset + reference / loopback board), above the numbers themselves;
+        # the form is appended after it.
         self._params_layout.addWidget(self._build_mode_row())
         self._params_layout.addWidget(self._build_preset_row())
         self._reference_label = QLabel()
@@ -156,11 +156,11 @@ class AnalysisPanel(QWidget):
         self._reference_label.setWordWrap(True)
         self._params_layout.addWidget(self._reference_label)
         self._params_layout.addWidget(self._build_reference_row())
-        self._pairs_label = QLabel()
-        self._pairs_label.setProperty("role", "viewer")
-        self._pairs_label.setWordWrap(True)
-        self._params_layout.addWidget(self._pairs_label)
-        self._params_layout.addWidget(self._build_pairs_row())
+        self._board_label = QLabel()
+        self._board_label.setProperty("role", "viewer")
+        self._board_label.setWordWrap(True)
+        self._params_layout.addWidget(self._board_label)
+        self._params_layout.addWidget(self._build_board_row())
         self._params_hint = QLabel("Select a measurement result to analyse.")
         self._params_hint.setWordWrap(True)
         self._params_layout.addWidget(self._params_hint)
@@ -295,27 +295,27 @@ class AnalysisPanel(QWidget):
         self._mode_row.setVisible(False)
         return self._mode_row
 
-    def _build_pairs_row(self) -> QWidget:
-        """Loopback pairs: load the pad pairs from a JSON file, or clear them."""
-        self._pairs_row = QWidget()
-        row = QHBoxLayout(self._pairs_row)
+    def _build_board_row(self) -> QWidget:
+        """Loopback board: load its pad groups + GND pads from JSON, or clear them."""
+        self._board_row = QWidget()
+        row = QHBoxLayout(self._board_row)
         row.setContentsMargins(0, 0, 0, 0)
-        self._load_pairs_btn = QPushButton("Load pairs…")
-        self._load_pairs_btn.setProperty("role", "interactive")
-        self._load_pairs_btn.setToolTip(
-            "Read a loopback-pairs JSON: which pads the loopback PCB shorts\n"
-            "together. Pads are placed on tester pins through the selected\n"
-            "mapping. Save a preset afterwards to keep them."
+        self._load_board_btn = QPushButton("Load loopback…")
+        self._load_board_btn.setProperty("role", "interactive")
+        self._load_board_btn.setToolTip(
+            "Read a loopback-board JSON: which pads the loopback PCB joins\n"
+            "into groups and which it grounds. Pads are placed on tester pins\n"
+            "through the selected mapping. Save a preset afterwards to keep it."
         )
-        self._load_pairs_btn.clicked.connect(self._load_pairs)
-        row.addWidget(self._load_pairs_btn, 1)
-        self._clear_pairs_btn = QPushButton("Clear")
-        self._clear_pairs_btn.setProperty("role", "interactive")
-        self._clear_pairs_btn.setToolTip("Drop the loaded pairs")
-        self._clear_pairs_btn.clicked.connect(self._clear_pairs)
-        row.addWidget(self._clear_pairs_btn)
-        self._pairs_row.setVisible(False)
-        return self._pairs_row
+        self._load_board_btn.clicked.connect(self._load_board)
+        row.addWidget(self._load_board_btn, 1)
+        self._clear_board_btn = QPushButton("Clear")
+        self._clear_board_btn.setProperty("role", "interactive")
+        self._clear_board_btn.setToolTip("Drop the loaded loopback board")
+        self._clear_board_btn.clicked.connect(self._clear_board)
+        row.addWidget(self._clear_board_btn)
+        self._board_row.setVisible(False)
+        return self._board_row
 
     def _build_preset_row(self) -> QWidget:
         """Preset selector + Save as… / Import… (acceptance criteria on file)."""
@@ -542,7 +542,7 @@ class AnalysisPanel(QWidget):
             self._params_layout.addWidget(self._form)
         self._refresh_presets()
         self._sync_reference()
-        self._sync_pairs()
+        self._sync_board()
 
     # ---- analysis mode -----------------------------------------------------
     def _refresh_modes(self) -> None:
@@ -611,7 +611,7 @@ class AnalysisPanel(QWidget):
             if settings_type is not None:
                 self._form.set_settings(settings_type())
             self._sync_reference()
-            self._sync_pairs()
+            self._sync_board()
             self.run_analysis()
             return
         try:
@@ -626,7 +626,7 @@ class AnalysisPanel(QWidget):
             return
         self._form.set_settings(preset.settings)
         self._sync_reference()
-        self._sync_pairs()
+        self._sync_board()
         self._status.setText(f"Preset '{preset.name}' applied.")
         self.run_analysis()
 
@@ -711,57 +711,59 @@ class AnalysisPanel(QWidget):
             "min/max limits above, so the tolerances are unused.",
         )
 
-    # ---- loopback pairs ----------------------------------------------------
-    def _current_pairs(self) -> LoopbackPairs:
+    # ---- loopback board ----------------------------------------------------
+    def _current_board(self) -> LoopbackBoard:
         if self._form is None:
-            return LoopbackPairs()
-        return self._form.hidden("pairs") or LoopbackPairs()
+            return LoopbackBoard()
+        return self._form.hidden("board") or LoopbackBoard()
 
-    def _sync_pairs(self) -> None:
-        """Show the pairs controls for a mode that has them, with what is loaded."""
-        has_pairs = self._form is not None and self._form.has_hidden("pairs")
-        self._pairs_label.setVisible(has_pairs)
-        self._pairs_row.setVisible(has_pairs)
-        if not has_pairs:
+    def _sync_board(self) -> None:
+        """Show the loopback controls for a mode that has them, with what is loaded."""
+        has_board = self._form is not None and self._form.has_hidden("board")
+        self._board_label.setVisible(has_board)
+        self._board_row.setVisible(has_board)
+        if not has_board:
             return
-        pairs = self._current_pairs()
-        text = f"Loopback pairs: {pairs.describe()}"
-        if pairs.source:
-            text += f" (from {pairs.source})"
-        self._pairs_label.setText(text)
-        self._clear_pairs_btn.setEnabled(bool(pairs))
+        board = self._current_board()
+        text = f"Loopback board: {board.describe()}"
+        if board.source:
+            text += f" (from {board.source})"
+        self._board_label.setText(text)
+        self._clear_board_btn.setEnabled(bool(board))
 
-    def _load_pairs(self) -> None:
+    def _load_board(self) -> None:
         if self._form is None:
             return
+        # board files usually sit beside the layouts they name (the store)
         path, _ = QFileDialog.getOpenFileName(
-            self, "Load loopback pairs", "", "Loopback pairs (*.json);;All files (*)"
+            self, "Load loopback board", str(user_layouts_dir()),
+            "Loopback board (*.loopback.json);;JSON (*.json);;All files (*)",
         )
         if not path:
             return
         try:
-            pairs = load_pairs(path)
+            board = load_board(path)
         except (OSError, ValueError) as exc:
             QMessageBox.warning(
-                self, "Cannot load pairs",
-                f"'{Path(path).name}' is not a valid loopback-pairs file:\n{exc}",
+                self, "Cannot load loopback board",
+                f"'{Path(path).name}' is not a valid loopback-board file:\n{exc}",
             )
             return
-        self._form.set_hidden("pairs", pairs)
-        self._sync_pairs()
+        self._form.set_hidden("board", board)
+        self._sync_board()
         self.run_analysis()
         self._status.setText(
-            f"Loaded {len(pairs.pairs)} pair(s) from {Path(path).name}. "
-            "Save a preset to keep them."
+            f"Loaded {board.describe()} from {Path(path).name}. "
+            "Save a preset to keep it."
         )
 
-    def _clear_pairs(self) -> None:
+    def _clear_board(self) -> None:
         if self._form is None:
             return
-        self._form.set_hidden("pairs", LoopbackPairs())
-        self._sync_pairs()
+        self._form.set_hidden("board", LoopbackBoard())
+        self._sync_board()
         self.run_analysis()
-        self._status.setText("Loopback pairs cleared.")
+        self._status.setText("Loopback board cleared.")
 
     def _save_preset(self) -> None:
         if self._form is None or not self._measurement:

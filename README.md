@@ -170,44 +170,58 @@ The scripts in this section can be seen as inspiration to come up with own scrip
 ### Loopback mode (filter measurement)
 
 An interface such as the interposer can be tested by fitting a loopback PCB that
-shorts its pads in pairs. A filter measurement through a working interface then
-charges *two* filter capacitors per pin and reads about twice the nominal C (see
-"Shorts between Electrodes" in the frontend README). In the Analysis panel, load
-a `measure_filter` result and set **Mode** to *Loopback (paired pads)*:
+joins its pads together — mostly in pairs, sometimes in larger groups (e.g. a
+heater's force/sense pads, joined through the heating element). A filter
+measurement through a working interface then charges every filter capacitor of a
+pin's group at once, so a pin in a group of *n* reads about *n* times the nominal
+C (see "Shorts between Electrodes" in the frontend README). Pads the board ties to
+ground should read as shorted. In the Analysis panel, load a `measure_filter`
+result and set **Mode** to *Loopback (grouped pads)*:
 
 | Pin | Reading (C / nominal) | Verdict |
 | --- | --- | --- |
-| paired | ~2× | OK |
-| paired | ~1× | Loop open — the interface does not connect |
-| paired | >2× | Extra short |
-| unpaired | ~1× | OK |
-| unpaired | >1× | Extra short |
-| either pin of a pair | the two pins disagree | Pair mismatch — re-measure |
+| in a group of *n* | ~*n*× | OK |
+| in a group of *n* | below *n*× | Loop open — not every filter of the group reached |
+| in a group of *n* | above *n*× | Extra short |
+| ungrouped | ~1× | OK |
+| ungrouped | >1× | Extra short |
+| grounded by the board | shorted | Shorted (expected) — a pass |
+| grounded by the board | anything else | Loop open |
+| pins of one group | disagree | Group mismatch — re-measure |
 
-The cut-offs sit half-way between filter counts (1.5× and 2.5× by default), so
-normal capacitor spread cannot blur 1× into 2×. Shorted and not-detected pins,
-and the filter resistance window, are judged as in the standard mode.
+A count is accepted within ±0.5 filters (`count_tolerance`), half-way between
+counts, so normal capacitor spread cannot blur one count into the next. Shorted
+and not-detected pins, and the filter resistance window, are judged as in the
+standard mode.
 
-Which pads are paired is a small JSON file, loaded with **Load pairs…** and kept
+The loopback board is a small JSON file, loaded with **Load loopback…** and kept
 in a preset with **Save as…**:
 
 ```json
 {
   "schema": 1,
-  "kind": "loopback-pairs",
+  "kind": "loopback",
   "name": "Interposer loopback PCB",
   "source": "loopback-pcb rev A",
   "interface": "interposer",
-  "pairs": [["A3", "B7"], ["C1", "C2"]]
+  "groups": [["A3", "B7"], ["N9", "N18"]],
+  "gnd": ["C3", "D4"]
 }
 ```
 
+List only pads that carry a filter channel — a group's size *is* the number of
+filters a pin of it should see (a heater pad with no tester channel stays out).
 Pads are named on one interface (`interface` is that layout's slug, i.e. the
 mapping CSV's column header). The file holds no tester pins: each pad's
-`(connector, pin)` comes from the **Mapping** selected in the panel, so one pairs
+`(connector, pin)` comes from the **Mapping** selected in the panel, so one board
 file serves every cabling. In this mode the mapping changes the verdict, so
-changing it re-runs the analysis, and any paired pad the mapping does not name is
-shown as a warning above the view rather than guessed.
+changing it re-runs the analysis, and any loopback pad the mapping does not name
+is shown as a warning above the view rather than guessed.
+
+Name the file `<something>.loopback.json` and it can live beside your custom
+layouts (it is then skipped by the layout selector, and **Load loopback…** opens
+there). On the connector map each group is outlined around its pads (a larger
+group as a chain of outlines), and the pads are drawn smaller to leave room.
 
 ## Custom interface layouts
 

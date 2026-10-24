@@ -12,6 +12,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-24
+
 ### Added
 - **Analysis modes.** A measurement can now be analysed more than one way; a
   **Mode** selector appears in the Analysis panel when there is a choice. Presets
@@ -19,13 +21,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mode) and the preset list shows only the selected mode's presets. A report saved
   from a non-default mode carries the mode in its file name.
 - **Loopback mode for `measure_filter`**, for testing an interface fitted with a
-  loopback PCB that shorts its pads in pairs: a paired pin should read ~2× the
-  nominal filter C, an unpaired pin ~1×. Verdicts *Loop open*, *Extra short* and
-  *Pair mismatch* (the two pins of a pair disagree) join the existing ones. Pairs
-  are named by pad in a `loopback-pairs` JSON and placed on tester pins through
-  the selected mapping, so one pairs file serves every cabling; pads the mapping
-  cannot place are reported as warnings above the view and in the report. See the
-  README's "Loopback mode" section.
+  loopback PCB that joins its pads in groups (mostly pairs) and grounds some: a
+  pin in a group of *n* should read ~*n*× the nominal filter C, an ungrouped pin
+  ~1×, and a grounded pad should read shorted, which then counts as a pass
+  (*Shorted (expected)*). The nominal defaults to 1.4 nF — one 1 nF filter plus
+  the FPC, as the original interposer analysis assumed. Verdicts *Loop open*,
+  *Extra short* and *Group mismatch* (the pins of a group disagree) join the
+  existing ones. The board is a `loopback`
+  JSON naming its pads, placed on tester pins through the selected mapping, so one
+  board file serves every cabling; pads the mapping cannot place are reported as
+  warnings above the view and in the report. See the README's "Loopback mode".
+- **Group outlines on the connector map**: in loopback mode each resolved group is
+  drawn as outlines around its pads (the style of the original interposer loopback
+  pictures), with the pads shrunk to leave a gap between outlines.
+- Files named `*.loopback.json` are skipped by layout discovery, so loopback-board
+  files can sit beside the custom layouts they name; **Load loopback…** opens there.
 
 ### Fixed
 - **Self-test could not be stopped** when the scope never triggered (e.g. no
@@ -35,6 +45,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `<= 0` waits forever) bounds the wait; a pin that never triggers is logged as
   "No trigger", recorded without a correlation value and counted as faulty, and
   the current check is skipped with a note instead of hanging.
+
+## [0.3.0] - 2026-07-30
+
+### Added
+- **Acceptance limits per measured quantity.** Every value an analysis fits or
+  records is judged against its own min/max window — the filter's capacitance
+  *and* resistance, the resistance to ground, the voltage — declared once in a
+  quantity registry that drives the settings form (with units), the report and
+  the plot. The filter resistance is now actually enforced; its window defaults
+  wide open, so results analysed with the defaults read as before.
+- **Golden reference.** *Use result as reference* turns a known-good measurement
+  into expected values per pin (`connector:pin`; the round-based resistance and
+  voltage measurements use `*:pin`, the median over rounds). A pin with an entry
+  is judged against `expected ± (abs tol + rel tol · |expected|)` — `rel_tol`
+  global, the absolute tolerance per quantity — and falls back to the min/max
+  window otherwise. *View…* lists the table and *Clear* drops it; the scatter
+  view draws each pin's own band and expected value.
+- **Analysis presets**: named acceptance criteria, golden reference included,
+  saved with *Save as…*, re-applied from the Preset selector and shared with
+  *Import…*. They live in a configurable folder (Settings → File locations,
+  default `analysis_presets` in the app data directory) and are scoped to one
+  measurement.
+- The report names which quantity went out of band (e.g. `Out of band: C 2, R 1`).
+
+### Changed
+- Verdicts are named after the window they left: *Below limit* / *Above limit*
+  replace *Off-nominal* / *Above nominal (possible short)*. For the resistance
+  measurement the window *is* the short / high-impedance thresholds, so those
+  verdicts keep their names.
+- Old analysis settings are migrated on load: a filter `nominal ± rel_tolerance`
+  becomes a capacitance window, and `r_nominal_ohm` (reported but never enforced)
+  is dropped so a migrated preset does not suddenly fail pins on R.
+- Settings: "Output locations" is now "File locations" and holds the presets
+  folder as well. The reference tolerances are greyed out until a golden
+  reference is loaded, since they apply to nothing before that.
 
 ## [0.2.0] - 2026-07-29
 

@@ -31,10 +31,19 @@ STATUS_INFO: dict[str, tuple[str, str]] = {
     "shorted": ("Shorted", "#c0392b"),
     "high_impedance": ("High impedance", "#8e44ad"),
     # loopback mode (see loopback_analysis): how many filters a pin sees
-    "loop_open": ("Loop open", "#2e86c1"),
+    "loop_open": ("Loop open", "#f4d03f"),  # never blue: GND pads are blue
     "extra_short": ("Extra short", "#c2185b"),
-    "pair_mismatch": ("Pair mismatch", "#7d6608"),
+    "group_mismatch": ("Group mismatch", "#7d6608"),
+    "expected_short": ("Shorted (expected)", "#7fb3d5"),
 }
+
+# Verdicts that count as a pass. A short is a fault — unless the setup puts it
+# there on purpose (a loopback board grounding a pad).
+PASS_STATUSES = frozenset({"ok", "expected_short"})
+
+
+def is_fault(status: str) -> bool:
+    return status not in PASS_STATUSES
 
 
 @dataclass
@@ -73,6 +82,9 @@ class AnalysisResult:
     # Problems with the analysis inputs rather than the board (e.g. a loopback
     # pad the mapping does not name). Shown above the findings in the report.
     warnings: list[str] = field(default_factory=list)
+    # Points the setup joins, as ((connector, dsub_pin), (connector, dsub_pin)):
+    # the connector map outlines each one (consecutive pads of a loopback group).
+    links: list[tuple[tuple[int, int], tuple[int, int]]] = field(default_factory=list)
     # The band every pin shares, shaded across the plot. ``None`` when a golden
     # reference gives each pin its own — those are drawn per point from
     # ``Finding.limits`` instead.
@@ -88,7 +100,7 @@ class AnalysisResult:
 
     @property
     def n_faults(self) -> int:
-        return sum(n for s, n in self.summary.items() if s != "ok")
+        return sum(n for s, n in self.summary.items() if is_fault(s))
 
     @property
     def failures_by_quantity(self) -> dict[str, int]:
@@ -114,7 +126,7 @@ def render_report(result: AnalysisResult, source_name: str = "") -> str:
         lines.append("")
 
     lines.extend(_warning_lines(result))
-    faults = [f for f in result.findings if f.status != "ok"]
+    faults = [f for f in result.findings if is_fault(f.status)]
     if faults:
         lines.append(f"Findings ({len(faults)}):")
         for f in faults:
@@ -174,7 +186,7 @@ from trap_tester.core.analysis.filter_analysis import (  # noqa: E402
     FilterAnalysisSettings,
     analyse_filter,
 )
-from trap_tester.core.analysis.loopback import LoopbackPairs  # noqa: E402
+from trap_tester.core.analysis.loopback import LoopbackBoard  # noqa: E402
 from trap_tester.core.analysis.loopback_analysis import (  # noqa: E402
     LoopbackAnalysisSettings,
     analyse_loopback,
@@ -202,7 +214,7 @@ class AnalysisMode:
 
     A measurement can be read more than one way — a ``measure_filter`` run is a
     plain filter characterisation, or, with a loopback PCB fitted, a check that
-    pads come back in pairs. The mode is chosen in the Analysis panel and
+    pads come back in their groups. The mode is chosen in the Analysis panel and
     recorded in a preset; it is never inferred from the result file, so one
     result can be analysed either way.
     """
@@ -221,7 +233,7 @@ ANALYSES: dict[str, list[AnalysisMode]] = {
     "measure_filter": [
         AnalysisMode(DEFAULT_MODE, "Standard", FilterAnalysisSettings, analyse_filter),
         AnalysisMode(
-            "loopback", "Loopback (paired pads)", LoopbackAnalysisSettings,
+            "loopback", "Loopback (grouped pads)", LoopbackAnalysisSettings,
             analyse_loopback, needs_mapping=True,
         ),
     ],
@@ -302,6 +314,7 @@ def analyse(
 
 
 __all__ = [
+    "PASS_STATUSES",
     "STATUS_INFO",
     "AcceptanceSettings",
     "Finding",
@@ -317,6 +330,7 @@ __all__ = [
     "DEFAULT_MODE",
     "AnalysisMode",
     "has_analysis",
+    "is_fault",
     "analysis_mode",
     "analysis_modes",
     "analysis_settings_for",
@@ -324,7 +338,7 @@ __all__ = [
     "analyse",
     "FilterAnalysisSettings",
     "LoopbackAnalysisSettings",
-    "LoopbackPairs",
+    "LoopbackBoard",
     "ResistanceAnalysisSettings",
     "VoltageAnalysisSettings",
     "analyse_filter",

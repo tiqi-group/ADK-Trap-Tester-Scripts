@@ -28,6 +28,7 @@ from trap_tester.core.analysis import (
     STATUS_INFO,
     AnalysisResult,
     Finding,
+    is_fault,
     primary_quantity,
 )
 from trap_tester.gui import theme
@@ -146,7 +147,7 @@ class AnalysisView(QWidget):
                     c=color, marker=marker, s=28, zorder=3,
                 )
 
-        n_faults = sum(1 for f in findings if f.status != "ok")
+        n_faults = sum(1 for f in findings if is_fault(f.status))
         ax.set_title(
             f"{result.title} — {n_faults} fault(s) / {len(findings)} pins",
             **_title_kw(),

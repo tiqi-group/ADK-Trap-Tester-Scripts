@@ -10,6 +10,7 @@ drawing, hit-testing and hover tooltip live here once.
 
 from __future__ import annotations
 
+import math
 from typing import TYPE_CHECKING
 
 from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg
@@ -34,7 +35,7 @@ from trap_tester.core.layout.style import pad_legend
 from trap_tester.gui import theme
 
 if TYPE_CHECKING:
-    from trap_tester.core.layout.interface import PinMark
+    from trap_tester.core.layout.interface import Link, PinMark
 
 # A legend entry as plain data: (label, fill colour, edge colour). Rendered as Qt
 # widgets beside the canvas, not drawn on it — so zoom/pan never disturbs it.
@@ -43,6 +44,7 @@ LegendItem = tuple[str, str, str]
 _FINGER_ASPECT = 0.32  # width / length of an elongated "finger" pad
 _ZOOM_STEP = 1.2       # limits shrink/grow by this factor per wheel notch
 _DRAG_PX = 3           # a press that moves less than this is a click, not a pan
+_LINK_ARC_STEPS = 12   # segments per half-circle of a link outline
 # In-pad labels are drawn level-of-detail: only for pads at least this big on
 # screen (radius in px) and inside the current view. Tiny/off-screen pads are
 # skipped, so a dense layout (e.g. the interposer/trap) stays fast and legible —
@@ -271,6 +273,15 @@ class LayoutCanvas(QWidget):
         if self._pin_patches:
             ax.add_collection(PatchCollection(
                 self._pin_patches, match_original=True, zorder=3))
+        if drawing.links:
+            # pairs the setup joins (loopback), outlined around both pads and
+            # drawn beneath them, so a long pair passes under the pads it spans
+            outlines = [
+                MplPolygon(_link_outline(ln), closed=True) for ln in drawing.links
+            ]
+            ax.add_collection(PatchCollection(
+                outlines, facecolor="none", edgecolor=theme.palette()["mpl_fg"],
+                lw=0.8, zorder=2))
 
         self._title_label.setText(self._title(drawing))
         xmin, xmax, ymin, ymax = drawing.bounds()
@@ -542,3 +553,17 @@ class LayoutCanvas(QWidget):
 
     def _on_canvas_click(self, event) -> None:
         """Left-click that wasn't a drag. Subclasses override (e.g. to mark)."""
+
+
+def _link_outline(link: Link) -> list[tuple[float, float]]:
+    """A stadium around both pads of a link: half-circles joined by two sides."""
+    angle = math.atan2(link.y2 - link.y1, link.x2 - link.x1)
+    points: list[tuple[float, float]] = []
+    # half-circle around end 2 (facing away from end 1), then around end 1; the
+    # straight sides are the closing segments between the two arcs
+    for cx, cy, start in ((link.x2, link.y2, angle - math.pi / 2),
+                          (link.x1, link.y1, angle + math.pi / 2)):
+        for i in range(_LINK_ARC_STEPS + 1):
+            a = start + math.pi * i / _LINK_ARC_STEPS
+            points.append((cx + link.r * math.cos(a), cy + link.r * math.sin(a)))
+    return points

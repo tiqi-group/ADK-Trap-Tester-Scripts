@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from trap_tester.core.analysis import STATUS_INFO
+from trap_tester.core.analysis import STATUS_INFO, is_fault
 from trap_tester.core.layout.interface import UNMEASURED_FILL, UNMEASURED_STROKE
 from trap_tester.gui.widgets.layout_canvas import LayoutCanvas, LegendItem
 
@@ -34,7 +34,7 @@ class ConnectorView(LayoutCanvas):
     # ---- title / legend (LayoutCanvas hooks) -------------------------------
     def _title(self, drawing: Drawing) -> str:
         measured = [p for p in drawing.pins if p.measured]
-        faults = [p for p in measured if p.status != "ok"]
+        faults = [p for p in measured if is_fault(p.status)]
         return f"{drawing.title} — {len(faults)} fault(s) / {len(measured)} pins"
 
     def _legend(self, drawing: Drawing) -> list[LegendItem]:
