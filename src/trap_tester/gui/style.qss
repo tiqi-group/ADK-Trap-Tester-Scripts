@@ -26,6 +26,9 @@ QPushButton[role="menu"]:hover {
     background: $menu_hover;
     border-radius: 4px;
 }
+QPushButton[role="menu"]:disabled {
+    color: rgba(255, 255, 255, 0.45);
+}
 
 /* Interactive controls — green */
 QPushButton[role="interactive"] {
@@ -55,6 +58,7 @@ QGroupBox[role="interactive"]::title {
 }
 
 QListWidget[role="interactive"],
+QTreeWidget[role="interactive"],
 QLineEdit[role="interactive"] {
     border: 1px solid $accent;
     border-radius: 3px;

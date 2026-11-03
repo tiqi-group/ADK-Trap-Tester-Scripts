@@ -2,9 +2,10 @@
 
 The voltage measurement records the mean/std voltage per pin. There is no
 intrinsic nominal, so each pin is judged against the ``v_min``/``v_max``
-acceptance window (defaults are wide open, so nothing is flagged until the
-operator sets one) — or against ``expected ± tolerance`` where the golden
-reference carries an entry for the pin.
+acceptance window — or against ``expected ± tolerance`` where the golden
+reference carries an entry for the pin. The window defaults to the frontend's
+input range, 0 … 5 V: anything outside it is not merely out of spec, it is a
+voltage that permanently damages the tester, so it must be flagged.
 
 Rows are keyed by measurement round rather than by connector, so reference
 entries for this measurement use the wildcard key ``"*:<pin>"``.
@@ -40,9 +41,9 @@ class VoltageAnalysisSettings(AcceptanceSettings):
 
     measurement: ClassVar[str] = "measure_voltage"
 
-    # --- Voltage ---
-    v_min: float = field(default=-10.0, metadata=meta(_CAT_V, unit="V"))
-    v_max: float = field(default=10.0, metadata=meta(_CAT_V, unit="V"))
+    # --- Voltage (default: the frontend's safe input range) ---
+    v_min: float = field(default=0.0, metadata=meta(_CAT_V, unit="V"))
+    v_max: float = field(default=5.0, metadata=meta(_CAT_V, unit="V"))
 
     # --- Reference tolerances ---
     rel_tol: float = field(default=0.1, metadata=meta(CAT_TOL))

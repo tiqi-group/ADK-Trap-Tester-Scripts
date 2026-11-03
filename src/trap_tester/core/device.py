@@ -17,8 +17,8 @@ import numpy as np
 
 from trap_tester.utils import (
     GAIN_FRONTEND,
-    R_REF,
     R_SENSE,
+    R_SOURCE,
     SENSE_MAG,
     SW_MEAS_SEL_IDX,
     WR_IDX,
@@ -29,7 +29,6 @@ from trap_tester.utils import (
 _C_PAR = 30e-12  # parasitic capacitance [F]
 _C_FILT_NOM = 1.0e-9  # nominal filter capacitance [F]
 _R_FILT_NOM = 2000.0  # nominal filter resistance [Ohm]
-_R_AFE = R_REF + R_SENSE  # 10940 Ohm
 _I_LEAK = 0.5e-6  # steady-state leakage current [A]
 _STEP_SAMPLE = 200  # sample index at which the excitation step occurs
 
@@ -156,7 +155,9 @@ class _MockScope:
 
     def _generate_voltage(self, n: int, rng: np.random.Generator) -> None:
         """Voltage-meter mode: a per-pin quasi-DC voltage on both channels."""
-        v0 = rng.uniform(-0.5, 2.5)
+        # inside the frontend's 0-5 V input range: a real tester does not survive
+        # a negative input, so a simulated one should not show it either
+        v0 = rng.uniform(0.1, 2.5)
         v = v0 + rng.normal(0, 5e-3, size=n)
         self._channels[0]._data = v.copy()
         self._channels[1]._data = v
@@ -185,17 +186,17 @@ class _MockScope:
         # diverging at ratio == 1; still well within the filter "settled" band.
         v_asymptote = v_end * 0.999
         v = step_double_rc(
-            t.copy(), _C_PAR, max(c_filt, 1e-15), _R_AFE, max(r_filt, 1.0),
+            t.copy(), _C_PAR, max(c_filt, 1e-15), R_SOURCE, max(r_filt, 1.0),
             t_start, v_asymptote,
         )
         v = v + rng.normal(0, 1e-3, size=n)
 
         # sense current: leakage + a charging transient whose integral is
         # V_end * C_tot, so numerical integration recovers the capacitance.
-        tau = _R_AFE * c_tot
+        tau = R_SOURCE * c_tot
         i = np.full(n, _I_LEAK)
         mask = t >= t_start
-        i[mask] += (v_end / _R_AFE) * np.exp(-(t[mask] - t_start) / tau)
+        i[mask] += (v_end / R_SOURCE) * np.exp(-(t[mask] - t_start) / tau)
         i = i + rng.normal(0, 2e-8, size=n)
 
         self._channels[0]._data = v

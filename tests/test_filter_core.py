@@ -81,6 +81,31 @@ def test_resistance_measurement():
     assert df["R_est"].gt(0).all()
 
 
+def test_source_resistance_is_ref_plus_sense():
+    from trap_tester.utils import R_REF, R_SENSE, R_SOURCE
+
+    # 10 kOhm current limiting + 470 Ohm sense; the self-test's nominal 191 uA
+    # is 2 V across exactly this
+    assert (R_REF, R_SENSE, R_SOURCE) == (10000, 470, 10470)
+    assert round(2.0 / R_SOURCE * 1e6) == 191
+
+
+def test_resistance_estimate_uses_the_source_resistance():
+    """R_SENSE is part of R_SOURCE already; adding it again read ~470 Ohm low,
+    so a few-hundred-Ohm fault came out as a dead short."""
+    import numpy as np
+
+    from trap_tester.core.measurements.resistance import _estimate_pin
+    from trap_tester.utils import R_SOURCE
+
+    s = ResistanceSettings()
+    for r_true, shorted in ((300.0, False), (5.0, True), (50e3, False)):
+        i = np.full(200, s.amplitude / (r_true + R_SOURCE))
+        est = _estimate_pin(s, i, i * r_true)
+        assert est["shorted"] is shorted, r_true
+        assert abs(est["r"] - r_true) < 1e-6 * max(r_true, 1.0), (r_true, est["r"])
+
+
 def test_voltage_no_duplication_on_retake():
     s = VoltageSettings(n_rounds=1, file_prefix="", invalid_pins=list(range(4, 51)))
     with open_device(force_mock=True) as dev:

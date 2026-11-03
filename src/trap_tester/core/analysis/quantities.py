@@ -101,7 +101,9 @@ V_AVG = Quantity(
     max_field="v_max",
     abs_tol_field="v_abs_tol_v",
     primary=True,
-    non_negative=False,  # a measured voltage may legitimately be negative
+    # A reading of a grounded pin can come out a hair below 0 V; that is noise,
+    # not a skip marker, so a golden capture must keep it.
+    non_negative=False,
 )
 
 

@@ -1,0 +1,19 @@
+{
+  "repository": "git@github.com:tiqi-group/ADK-Trap-Tester-Frontend.git",
+  "ref": "HEAD",
+  "commit": "6d63d8a0dabb610ca35ef9bfc02be25c01a6870e",
+  "commit_date": "2026-11-02T17:55:35+01:00",
+  "skipped_sections": [
+    "Order Information"
+  ],
+  "rewritten_links": [
+    "https://gitlab.phys.ethz.ch/tiqi-projects/tiqi-trap-tester/trap-tester-adk-script"
+  ],
+  "images": [
+    "docs/Render.jpg",
+    "docs/SimplifiedSchematic.jpg",
+    "docs/Model.jpg",
+    "docs/ModelElectrodeShort.jpg",
+    "docs/ModelFilterBoardShort.jpg"
+  ]
+}

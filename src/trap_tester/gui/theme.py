@@ -41,6 +41,9 @@ _PALETTES: dict[str, dict[str, str]] = {
         "viewer_box_bg": "rgba(224, 73, 47, 0.08)",
         "terminal_bg": "#1e1e1e", "terminal_text": "#e6e6e6",
         "warn_text": "#8a6d00", "warn_bg": "#fff4d6", "warn_border": "#e0c060",
+        # manual: code blocks / inline code, search matches (all, current)
+        "code_bg": "#e6e6e6", "code_border": "#cfcfcf",
+        "find_bg": "#ffe680", "find_current_bg": "#f5a742",
         # matplotlib
         "mpl_fig_bg": "#ffffff", "mpl_axes_bg": "#ffffff",
         "mpl_fg": "#202020", "mpl_grid": "#c8c8c8",
@@ -63,6 +66,8 @@ _PALETTES: dict[str, dict[str, str]] = {
         "viewer_box_bg": "rgba(224, 73, 47, 0.14)",
         "terminal_bg": "#1e1e1e", "terminal_text": "#e6e6e6",
         "warn_text": "#ffd24d", "warn_bg": "#4a3f1a", "warn_border": "#7a6620",
+        "code_bg": "#363839", "code_border": "#4d5052",
+        "find_bg": "#5e5016", "find_current_bg": "#a8661a",
         # matplotlib
         "mpl_fig_bg": "#2b2b2b", "mpl_axes_bg": "#313335",
         "mpl_fg": "#d0d0d0", "mpl_grid": "#4a4a4a",

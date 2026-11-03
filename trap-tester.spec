@@ -47,6 +47,12 @@ datas = [
      "trap_tester/core/layout/layouts"),
     (str(SRC / "trap_tester/gui/style.qss"),
      "trap_tester/gui"),
+    # The in-app manual: Markdown chapters plus their images, copied as a whole
+    # tree (a directory source is collected recursively), so a new chapter or
+    # image never needs an entry here.  frontend/ is vendored by
+    # scripts/sync_frontend_docs.py.
+    (str(SRC / "trap_tester/manual"),
+     "trap_tester/manual"),
 ]
 
 # The QtAgg canvas backend is imported directly in code, but list it explicitly

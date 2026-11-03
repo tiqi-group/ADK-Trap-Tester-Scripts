@@ -13,8 +13,12 @@ WR_IDX = 8
 USR_LED_IDX = 15
 
 GAIN_FRONTEND = 2 # V/V
-R_REF = 10470 # Ohm
-R_SENSE = 470 # Ohm
+# The output stage drives the pins through two resistors in series: a current-
+# limiting one (R_REF) and the current-sense one (R_SENSE). Every formula that
+# needs "the resistance in front of the load" wants their sum, R_SOURCE.
+R_REF = 10000 # Ohm, current limiting
+R_SENSE = 470 # Ohm, current sense
+R_SOURCE = R_REF + R_SENSE # Ohm, 10470: total source resistance
 SENSE_MAG = 25 # V/V
 
 DSUB_GND_PIN = 9

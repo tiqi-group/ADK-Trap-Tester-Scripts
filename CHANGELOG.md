@@ -12,6 +12,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- **Manual panel.** A new *Manual* tab shows the documentation inside the app:
+  a contents tree of every chapter and its headings on the left (with Back /
+  Forward), the rendered chapter on the right. Equations are typeset (matplotlib
+  mathtext, in the theme's colours), `#heading` links and links between chapters
+  work, web links open in the system browser, and figures shrink to fit.
+  Chapters: Getting started, one per panel (Measurement, Analysis, Interfaces,
+  Device Info, Self-Test, Settings), and Custom layouts and mappings, which
+  documents the schema-v2 layout JSON and mapping CSV. The last chapter is the
+  Analog Frontend README and its figures, vendored into
+  `src/trap_tester/manual/frontend/` by the new `scripts/sync_frontend_docs.py`
+  (manufacturing notes left out, links back to this repository pointed at the
+  manual; `SOURCE.json` pins the source commit) and shipped with the frozen
+  bundle. `--smoke-test` now renders every chapter.
+- **Manual search and F1 help.** A search field above the contents searches every
+  chapter (Ctrl+F; Enter / F3 next, Shift+Enter / Shift+F3 previous, Esc clears),
+  continuing into the following chapters and highlighting every match in the
+  open one. F1, or the **? Help** button at the right end of the top bar, opens
+  the current panel's chapter. Code blocks and the
+  manual's warnings are drawn as framed boxes in theme colours, and inline code
+  gets a background, in both light and dark mode.
+
+### Fixed
+- **DC-resistance estimate counted the sense resistor twice.** The frontend drives
+  a pin through 10 kΩ current limiting + 470 Ω sense = 10 470 Ω, but the code
+  called that total `R_REF` and the resistance measurement (and the simulated
+  device) added `R_SENSE` again, using 10 940 Ω. The current estimate read about
+  470 Ω low, so any fault below ~480 Ω came out as 0 Ω, a dead short, and the
+  voltage-divider estimate read 4.5 % high. The constants are now `R_REF`
+  (10 kΩ), `R_SENSE` (470 Ω) and `R_SOURCE = R_REF + R_SENSE`, which every
+  formula uses. The filter measurement already used 10 470 Ω and is unchanged.
+
+### Changed
+- **Voltage meter acceptance window defaults to 0 … 5 V** (was −10 … 10 V,
+  which flagged nothing): the frontend's input range, outside which a voltage
+  permanently damages the tester. Saved presets keep their own window. The
+  simulated device's voltages now stay inside that range too.
+- **README.** The user-facing sections (measurements, analysis, loopback mode,
+  custom layouts) moved into the manual; the README links to it. The layout
+  section it replaced still described the v1 format. The clone URL and the
+  Analog Frontend link now point at the GitHub repositories.
+
 ## [0.4.0] - 2026-10-24
 
 ### Added

@@ -1,10 +1,13 @@
 """Main window: the panel-selector menu bar plus a stacked panel view.
 
 The current panel's selector is shown in bold, matching the mock's top bar.
+F1, or the "? Help" button at the right end of the bar, opens the Manual at the
+chapter about the panel being looked at.
 """
 
 from __future__ import annotations
 
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QButtonGroup,
@@ -21,6 +24,7 @@ from trap_tester.gui import theme
 from trap_tester.gui.panels.analysis_panel import AnalysisPanel
 from trap_tester.gui.panels.device_panel import DevicePanel
 from trap_tester.gui.panels.interfaces_panel import InterfacesPanel
+from trap_tester.gui.panels.manual_panel import ManualPanel
 from trap_tester.gui.panels.measurement_panel import MeasurementPanel
 from trap_tester.gui.panels.placeholder import PlaceholderPanel
 from trap_tester.gui.panels.selftest_panel import SelfTestPanel
@@ -33,7 +37,18 @@ _PANELS = [
     ("Device Info", None),
     ("Self-Test", None),
     ("Settings", None),
+    ("Manual", None),
 ]
+
+# Panel -> the manual chapter (``core.manual.CHAPTERS`` key) that F1 opens.
+_HELP_TOPICS = {
+    "Measurement": "measurement",
+    "Analysis": "analysis",
+    "Interfaces": "interfaces",
+    "Device Info": "device",
+    "Self-Test": "selftest",
+    "Settings": "settings",
+}
 
 
 class MainWindow(QMainWindow):
@@ -60,6 +75,7 @@ class MainWindow(QMainWindow):
             "Device Info": DevicePanel,
             "Self-Test": SelfTestPanel,
             "Settings": SettingsPanel,
+            "Manual": ManualPanel,
         }
         self._panels: dict[str, QWidget] = {}
         for name, note in _PANELS:
@@ -74,7 +90,20 @@ class MainWindow(QMainWindow):
             settings.changed.connect(self._on_settings_changed)
             settings.themeChanged.connect(self._on_theme_changed)
 
+        help_key = QShortcut(QKeySequence.StandardKey.HelpContents, self)  # F1
+        help_key.activated.connect(self.show_help)
+
         self._select(0)
+
+    def show_help(self) -> None:
+        """Open the manual at the chapter for the current panel (F1)."""
+        names = [name for name, _ in _PANELS]
+        current = names[self._stack.currentIndex()]
+        manual_panel = self._panels.get("Manual")
+        if current == "Manual" or not isinstance(manual_panel, ManualPanel):
+            return
+        manual_panel.show_topic(_HELP_TOPICS.get(current, "start"))
+        self._select(names.index("Manual"))
 
     def _on_settings_changed(self) -> None:
         """Refresh panels that read configurable paths / layout folders."""
@@ -105,15 +134,25 @@ class MainWindow(QMainWindow):
             btn = QPushButton(name)
             btn.setCheckable(True)
             btn.setProperty("role", "menu")
+            if name == "Manual":
+                btn.setToolTip("The manual. Press F1 on any panel to open its chapter.")
             btn.clicked.connect(lambda _=False, idx=i: self._select(idx))
             group.addButton(btn, i)
             self._buttons.append(btn)
             row.addWidget(btn)
         row.addStretch(1)
+        # Not a panel selector: not checkable, not in the group.
+        self._help_btn = QPushButton("? Help")
+        self._help_btn.setProperty("role", "menu")
+        self._help_btn.setToolTip("Open the manual at this panel's chapter (F1)")
+        self._help_btn.clicked.connect(self.show_help)
+        row.addWidget(self._help_btn)
         return bar
 
     def _select(self, index: int) -> None:
         self._stack.setCurrentIndex(index)
+        # on the Manual itself there is no other chapter to jump to
+        self._help_btn.setEnabled(_PANELS[index][0] != "Manual")
         for i, btn in enumerate(self._buttons):
             btn.setChecked(i == index)
             font = btn.font()

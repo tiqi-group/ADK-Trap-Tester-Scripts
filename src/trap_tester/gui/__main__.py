@@ -6,7 +6,7 @@ import os
 import sys
 import traceback
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtWidgets import QApplication, QWidget
 
 from trap_tester.core.appconfig import theme as configured_theme
 from trap_tester.core.appconfig import ui_scale as configured_ui_scale
@@ -76,6 +76,12 @@ def _smoke_test(app: QApplication) -> int:
         window.show()
         for _ in range(5):  # let deferred/rebuilt widgets settle
             app.processEvents()
+        # Panels that load content lazily (only once shown) expose smoke_test()
+        # so the bundled data they need is exercised here all the same.
+        for widget in window.findChildren(QWidget):
+            smoke = getattr(widget, "smoke_test", None)
+            if callable(smoke):
+                smoke()
         window.close()
     except Exception:
         stream = sys.stderr or sys.stdout

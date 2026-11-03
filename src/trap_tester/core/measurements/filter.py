@@ -35,8 +35,8 @@ from trap_tester.core.settings import FilterSettings, save_result
 from trap_tester.utils import (
     EN_DAC1_IDX,
     GAIN_FRONTEND,
-    R_REF,
     R_SENSE,
+    R_SOURCE,
     SENSE_MAG,
     SW_ADC_TO_GND_IDX,
     SW_MEAS_SEL_IDX,
@@ -170,9 +170,9 @@ def _row(k: int, pin: int, shorted: bool, c_nf: float, r: float, bw: float, perr
 
 def _classify_offnominal(ctx, s, k, pin, v_end, i_end, i_short) -> dict[str, Any]:
     """Not-settled branch: distinguish shorts before/after the filter."""
-    r_from_i = (s.amplitude / i_end) - R_REF
+    r_from_i = (s.amplitude / i_end) - R_SOURCE
     ratio = v_end / s.amplitude
-    r_from_v = (ratio / (1 - ratio)) * R_REF
+    r_from_v = (ratio / (1 - ratio)) * R_SOURCE
     r_mean = -1.0
     if np.abs((r_from_i / r_from_v) - 1) < 0.1:
         ctx.report.log("electrode possibly shorted after filter")
@@ -268,7 +268,7 @@ def run_filter_measurement(ctx: MeasurementContext) -> pd.DataFrame:
 
     nyq = 0.5 * s.f_sample
     b, a = signal.butter(4, s.cutoff / nyq, btype="low", analog=False)
-    i_short = s.amplitude / R_REF
+    i_short = s.amplitude / R_SOURCE
     pins = s.dsub_pins()
 
     # enable DAC output stage for the baseline (MUX not yet pointed at a pin)

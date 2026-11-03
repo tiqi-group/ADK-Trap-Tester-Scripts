@@ -24,8 +24,8 @@ from trap_tester.core.appconfig import measurements_dir
 from trap_tester.core.settings import ResistanceSettings, save_result
 from trap_tester.utils import (
     GAIN_FRONTEND,
-    R_REF,
     R_SENSE,
+    R_SOURCE,
     SENSE_MAG,
     SW_ADC_TO_GND_IDX,
     SW_MEAS_SEL_IDX,
@@ -35,7 +35,6 @@ from trap_tester.utils import (
 )
 
 _COLUMNS = ["Measurement round", "DSUB pin", "R_est", "Shorted", "High impedance"]
-_R_AFE = R_REF + R_SENSE
 
 # Digital-output configuration defined by this measurement (not user settings).
 ADC_TO_GND = False
@@ -92,9 +91,9 @@ def _estimate_pin(s: ResistanceSettings, i_meas: np.ndarray, v_meas: np.ndarray)
     v_end = np.mean(v_meas[-n:])
 
     r_tot_from_i = s.amplitude / i_end
-    r_to_gnd_from_i = max(0.0, r_tot_from_i - _R_AFE)
+    r_to_gnd_from_i = max(0.0, r_tot_from_i - R_SOURCE)
     ratio = v_end / s.amplitude
-    r_to_gnd_from_v = (ratio / (1 - ratio)) * _R_AFE
+    r_to_gnd_from_v = (ratio / (1 - ratio)) * R_SOURCE
 
     high_imp = r_to_gnd_from_v > s.r_high_imp
     if r_to_gnd_from_i < s.r_short:
