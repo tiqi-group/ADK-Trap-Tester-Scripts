@@ -8,6 +8,7 @@ and the alternate ``pin_space`` (drawing the same findings on another interface)
 from __future__ import annotations
 
 import json
+import os
 import pathlib
 
 import pandas as pd
@@ -617,7 +618,12 @@ def test_iontrap_reads_real_trap_files():
     # hawk1 + mapping_sparrow: a trap whose mapping CSV is still the plain
     # Electrode/Connector/DSUB_Pin format the importer reads. (mapping_buzzard.csv
     # is now the rich cross-interface *mapping* example, a separate artifact.)
-    root = pathlib.Path(__file__).resolve().parents[1] / "docs_tmp" / "traps"
+    # proprietary sources live outside the repo, in a sibling ``trap-tester-custom``
+    # checkout (override with TRAP_TESTER_CUSTOM_DIR)
+    custom = os.environ.get("TRAP_TESTER_CUSTOM_DIR") or (
+        pathlib.Path(__file__).resolve().parents[2] / "trap-tester-custom"
+    )
+    root = pathlib.Path(custom) / "sources" / "traps"
     if not (root / "hawk1.json").exists():
         pytest.skip("trap definition files not present")
     lay = generate_iontrap(root / "hawk1.json", root / "mapping_sparrow.csv")

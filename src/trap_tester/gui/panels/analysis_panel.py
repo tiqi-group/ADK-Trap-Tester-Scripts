@@ -650,8 +650,11 @@ class AnalysisPanel(QWidget):
             if confirm != QMessageBox.Yes:
                 return
         try:
+            # captured in the numbering the analysis judges in, so an inverted
+            # FPC's reference matches a straight-plugged board pin for pin
+            frame = analysis_engine.prepare_frame(self._df, self._form.get_settings())
             captured = golden.capture(
-                self._df, self._measurement,
+                frame, self._measurement,
                 source=self._source.name if self._source else "",
             )
         except (KeyError, ValueError) as exc:

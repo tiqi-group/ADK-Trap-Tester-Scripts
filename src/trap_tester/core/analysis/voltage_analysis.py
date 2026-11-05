@@ -24,6 +24,7 @@ from trap_tester.core.analysis.acceptance import (
     AcceptanceSettings,
     Reference,
     finding_fields,
+    fpc_inverted_field,
     message_for,
     meta,
     overall_status,
@@ -40,6 +41,9 @@ class VoltageAnalysisSettings(AcceptanceSettings):
     """Acceptance window for the measured per-pin voltage."""
 
     measurement: ClassVar[str] = "measure_voltage"
+
+    # --- FPC: the device's ribbon plugged in reversed ---
+    fpc_inverted: bool = fpc_inverted_field()
 
     # --- Voltage (default: the frontend's safe input range) ---
     v_min: float = field(default=0.0, metadata=meta(_CAT_V, unit="V"))

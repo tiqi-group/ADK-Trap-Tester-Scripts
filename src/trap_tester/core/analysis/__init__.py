@@ -186,6 +186,7 @@ from trap_tester.core.analysis.filter_analysis import (  # noqa: E402
     FilterAnalysisSettings,
     analyse_filter,
 )
+from trap_tester.core.analysis.fpc_permutation import prepare_frame  # noqa: E402
 from trap_tester.core.analysis.loopback import LoopbackBoard  # noqa: E402
 from trap_tester.core.analysis.loopback_analysis import (  # noqa: E402
     LoopbackAnalysisSettings,
@@ -298,13 +299,16 @@ def analyse(
     """Run one analysis mode (the default unless ``mode`` is given) on ``df``.
 
     ``mapping`` is the selected cross-interface mapping; only modes that declare
-    ``needs_mapping`` receive it. Raises ``KeyError`` if no such analysis exists.
+    ``needs_mapping`` receive it. The permutations the settings enable (an
+    inverted FPC) are applied to ``df`` first, so every mode — and the mapping —
+    sees the device's numbering. Raises ``KeyError`` if no such analysis exists.
     """
     entry = analysis_mode(measurement, mode)
     if entry is None:
         raise KeyError(
             f"No analysis {mode or DEFAULT_MODE!r} for measurement {measurement!r}"
         )
+    df = prepare_frame(df, settings)
     if entry.needs_mapping:
         result = entry.run(df, settings, mapping)
     else:
@@ -336,6 +340,7 @@ __all__ = [
     "analysis_settings_for",
     "mode_of_settings",
     "analyse",
+    "prepare_frame",
     "FilterAnalysisSettings",
     "LoopbackAnalysisSettings",
     "LoopbackBoard",

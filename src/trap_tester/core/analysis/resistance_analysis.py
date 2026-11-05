@@ -24,6 +24,7 @@ from trap_tester.core.analysis.acceptance import (
     AcceptanceSettings,
     Reference,
     finding_fields,
+    fpc_inverted_field,
     message_for,
     meta,
     overall_status,
@@ -47,6 +48,9 @@ class ResistanceAnalysisSettings(AcceptanceSettings):
         "r_short_ohm": "r_min_ohm",
         "r_high_imp_ohm": "r_max_ohm",
     }
+
+    # --- FPC: the device's ribbon plugged in reversed ---
+    fpc_inverted: bool = fpc_inverted_field()
 
     # --- Resistance to ground ---
     r_min_ohm: float = field(  # below this -> shorted

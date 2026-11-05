@@ -26,6 +26,7 @@ from trap_tester.core.analysis.acceptance import (
     AcceptanceSettings,
     Reference,
     finding_fields,
+    fpc_inverted_field,
     message_for,
     meta,
     overall_status,
@@ -48,6 +49,9 @@ class FilterAnalysisSettings(AcceptanceSettings):
     """
 
     measurement: ClassVar[str] = "measure_filter"
+
+    # --- FPC: the device's ribbon plugged in reversed ---
+    fpc_inverted: bool = fpc_inverted_field()
 
     # --- Capacitance ---
     c_min_nf: float = field(default=0.75, metadata=meta(_CAT_C, unit="nF"))

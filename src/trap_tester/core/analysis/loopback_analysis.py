@@ -41,6 +41,7 @@ from trap_tester.core.analysis.acceptance import (
     SEVERITY,
     AcceptanceSettings,
     Reference,
+    fpc_inverted_field,
     meta,
 )
 from trap_tester.core.analysis.filter_analysis import (
@@ -75,6 +76,9 @@ class LoopbackAnalysisSettings(AcceptanceSettings):
     """
 
     measurement: ClassVar[str] = "measure_filter"
+
+    # --- FPC: the device's ribbon plugged in reversed ---
+    fpc_inverted: bool = fpc_inverted_field()
 
     # --- Capacitance ---
     # One filter's C as seen through the loopback; the counts are relative to it.
@@ -117,6 +121,7 @@ class LoopbackAnalysisSettings(AcceptanceSettings):
         tol = self.count_tolerance
         r_lo, r_hi = self.limits(R_FILTER)
         return {
+            **self.fpc_params(),
             "Loopback board": self.board.describe(),
             "Nominal C (one filter)": C_FILTER.format(self.c_nominal_nf),
             "Pin in a group of n": f"(n ± {tol:g}) x nominal",

@@ -42,7 +42,8 @@ can be captured as a **golden reference** that later boards are compared with.
   **Import…** adds a preset file.
 * **Reference**: the golden reference, if one is loaded, with **Use result as
   reference**, **View…** and **Clear** (see [Golden reference](#golden-reference)).
-* The parameter form, grouped by quantity.
+* The parameter form, grouped by quantity. Its first section, **FPC**, holds the
+  `fpc inverted` tickbox (see [Inverted FPC](#inverted-fpc)).
 * **Run analysis** re-runs with the edited parameters. **Save report** writes the
   report to `results/analysis/<result name>-result.txt` (`-loopback-result.txt` in
   loopback mode).
@@ -120,6 +121,28 @@ permanently damages the tester (see
 [Input range](getting-started.md#input-range-0-v-to-5-v)). Narrow the window for
 your setup, or use a golden reference.
 
+## Inverted FPC
+
+A device can be plugged into the tester's front-end FPC connector the other way
+round, so that its ribbon conductors arrive in reverse order: the tester's conductor
+$c$ touches the device's conductor $52 - c$ (51 becomes 1, 50 becomes 2, and the
+centre conductor 26 stays where it is). Tick `fpc inverted` and press **Run
+analysis** to undo this.
+
+The inversion is undone at the tester end. Each measured pin is relabelled with the
+DSUB pin whose signal runs on the device's conductor, as if the ribbon had been
+plugged in the right way round. The findings, the report, the maps and the scatter
+plot then all use the device's numbering. Your **Mapping** stays valid: it describes
+the device side of the tester, which does not change. A golden reference captured
+with the tickbox on is in the device's numbering too, so it can judge a board that
+was plugged in the right way round, and the other way round.
+
+* Only pins that leave the tester on the FPC are affected. DSUB pin 9 (GND) has no
+  conductor and keeps its number.
+* The tickbox is part of the analysis parameters: it is saved in a preset and listed
+  in the report as `FPC inverted`. A preset saved before this option existed reads
+  as not inverted.
+
 ## Golden reference
 
 Instead of typing limits, you can measure a board you know is good and use its
@@ -165,7 +188,7 @@ listed.
   "measurement": "measure_filter",
   "analysis": "standard",
   "name": "AFE v2 acceptance",
-  "settings": {"c_min_nf": 0.75, "c_max_nf": 1.25, "rel_tol": 0.1},
+  "settings": {"fpc_inverted": false, "c_min_nf": 0.75, "c_max_nf": 1.25, "rel_tol": 0.1},
   "reference": {
     "source": "test_filter_test_20260728-142201.json",
     "captured": "2026-07-30T09:12:00",

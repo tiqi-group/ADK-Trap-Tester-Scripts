@@ -190,7 +190,7 @@ here because it records what changed in the data:
 * `interposer.json` was **regenerated** rather than converted: v1 wrote its 12
   `axialisation` pads in the grey unknown-type fallback, so that class is not
   recoverable from the file. (`axialisation` was in
-  `docs_tmp/interposer_flavor.csv` all along and had no entry in v1's colour table,
+  `trap-tester-custom/sources/interposer/interposer_flavor.csv` all along and had no entry in v1's colour table,
   so those pads were silently grey and absent from every legend.)
 * both mapping CSVs: headers canonicalised (`Connector`/`DSUB_Pin` → `connector`/
   `pin`), interface columns renamed to layout slugs — including `Electrode` →
@@ -218,7 +218,7 @@ addresses**.
 ## 6. Deferred
 
 - `pitch_mm` for `interposer` / `interposer_BePe` — needs the real LGA pitch.
-- `mapping_goshawk.csv` / `mapping_sparrow.csv` (`docs_tmp/traps`) are not yet
+- `mapping_goshawk.csv` / `mapping_sparrow.csv` (`trap-tester-custom/sources/traps`) are not yet
   imported as mappings; presumably the `hawk1` / `hawk2` counterparts to
   `mapping_buzzard.csv`.
 - Multi-ident (`;`) cells: parsed and tested, but no generator emits them yet.

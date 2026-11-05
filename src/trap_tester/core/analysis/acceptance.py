@@ -57,6 +57,19 @@ def meta(
 
 
 CAT_TOL = "Reference tolerances"
+CAT_FPC = "FPC"
+
+
+def fpc_inverted_field() -> Any:
+    """The FPC-inversion tickbox every analysis carries, as its first field.
+
+    Declared first so the section heads the form. It is a setting of the
+    analysis (stored in presets, listed in the report) rather than of the
+    mapping, because the inversion happens at the tester end: the mapping, which
+    describes the device side, stays valid either way. See
+    :mod:`~trap_tester.core.analysis.fpc_permutation`.
+    """
+    return field(default=False, metadata=meta(CAT_FPC))
 
 
 def reference_key(connector: int | str, pin: int) -> str:
@@ -181,6 +194,7 @@ class AcceptanceSettings:
 
     reference: Reference
     rel_tol: float
+    fpc_inverted: bool
 
     # ---- quantities / bands -------------------------------------------------
     @classmethod
@@ -239,7 +253,7 @@ class AcceptanceSettings:
     # ---- report parameters --------------------------------------------------
     def params(self) -> dict[str, Any]:
         """The acceptance criteria as the report header lists them."""
-        out: dict[str, Any] = {}
+        out: dict[str, Any] = self.fpc_params()
         for q in self.quantities():
             lo, hi = self.limits(q)
             out[f"{q.label} limits"] = q.band_text(lo, hi)
@@ -249,6 +263,14 @@ class AcceptanceSettings:
             for q in self.quantities():
                 out[f"{q.label} abs tol"] = q.format(self.abs_tol(q))
         return out
+
+    def fpc_params(self) -> dict[str, Any]:
+        """The FPC permutation as the report header lists it."""
+        if not self.fpc_inverted:
+            return {"FPC inverted": "no"}
+        return {
+            "FPC inverted": "yes (tester conductor c reads device conductor 52 - c)"
+        }
 
     # ---- (de)serialisation --------------------------------------------------
     def to_dict(self) -> dict[str, Any]:
@@ -303,6 +325,7 @@ def finding_fields(verdicts: list[QuantityVerdict]) -> dict[str, Any]:
 
 
 __all__ = [
+    "CAT_FPC",
     "CAT_TOL",
     "SEVERITY",
     "WILDCARD",
@@ -310,6 +333,7 @@ __all__ = [
     "QuantityVerdict",
     "Reference",
     "finding_fields",
+    "fpc_inverted_field",
     "message_for",
     "meta",
     "overall_status",

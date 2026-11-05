@@ -13,6 +13,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Inverted FPC.** Every analysis has a new `fpc inverted` tickbox (an *FPC*
+  section at the top of the parameter form) for a device plugged into the
+  front-end FPC the other way round, where the tester's conductor `c` reaches the
+  device's conductor `52 - c`. Ticked, each measured pin is relabelled with the
+  DSUB pin carrying the device's conductor before it is judged, so findings, maps,
+  golden references, loopback boards and the selected mapping all work in the
+  device's numbering, and the mapping needs no change. The tickbox is saved in
+  presets and listed in the report; presets without it load as not inverted.
 - **Manual panel.** A new *Manual* tab shows the documentation inside the app:
   a contents tree of every chapter and its headings on the left (with Back /
   Forward), the rendered chapter on the right. Equations are typeset (matplotlib
