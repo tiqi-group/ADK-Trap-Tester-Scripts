@@ -13,13 +13,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- **Selectable default location for layouts and mappings.** The *Custom layouts /
+  mappings* box in Settings has a *Default location* field (Browse / Apply / Reset)
+  for the folder that **Import…** writes layouts and mapping CSVs to, previously
+  fixed to `layouts/` in the app data folder. Stored in `layout_sources.json`;
+  `TRAP_TESTER_LAYOUTS_DIR` still overrides it (the field is then locked). The app's
+  config files stay in the app data folder wherever the layouts go.
+- **Presets remember their mapping.** *Save as…* stores the selected mapping CSV
+  in the preset (optional `"mapping"` key, by file name so it works across
+  machines), and choosing the preset selects it again. A loopback preset's
+  criteria only make sense through the mapping that places the board's pads, so
+  they now travel together. If the file is not in the layout folders, the current
+  mapping is kept and the status line warns. Presets without the key (older
+  ones, or saved with no mapping) leave the selection alone.
+- **Session persistence.** The app reopens where it was left: window geometry, the
+  selected panel, every column divider, and each panel's selections and unsaved
+  inputs: the measurement and its settings, the loaded analysis result with its
+  mode, preset and edited criteria (references, loopback boards, the FPC
+  tickbox), the Interfaces views, mapping and unsaved marks, and the Self-Test and
+  Device Info choices. Saved to `session.json` in the app data folder on exit; a
+  *Session* box in Settings turns it off or starts fresh. Missing files and
+  unplugged devices fall back to the defaults.
 - **Inverted FPC.** Every analysis has a new `fpc inverted` tickbox (an *FPC*
   section at the top of the parameter form) for a device plugged into the
   front-end FPC the other way round, where the tester's conductor `c` reaches the
   device's conductor `52 - c`. Ticked, each measured pin is relabelled with the
   DSUB pin carrying the device's conductor before it is judged, so findings, maps,
   golden references, loopback boards and the selected mapping all work in the
-  device's numbering, and the mapping needs no change. The tickbox is saved in
+  device's numbering, and the mapping needs no change. Toggling it re-runs the
+  analysis at once. The tickbox is saved in
   presets and listed in the report; presets without it load as not inverted.
 - **Manual panel.** A new *Manual* tab shows the documentation inside the app:
   a contents tree of every chapter and its headings on the left (with Back /

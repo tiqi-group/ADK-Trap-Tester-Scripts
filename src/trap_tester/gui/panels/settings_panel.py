@@ -5,10 +5,11 @@ Two columns of green (editable) / red (read-only) boxes:
 Left  — File locations: the results directory (and its ``measurements`` /
         ``analysis`` sub-folders) plus the analysis-presets folder, each
         persisted (and reset) on its own so a change survives restarts.
-Right — Custom layouts & mappings: the writable store (read-only, set by the OS
-        default or ``TRAP_TESTER_LAYOUTS_DIR``) plus the extra folders searched
-        for layouts/mapping CSVs (add / remove; also fed by
-        ``TRAP_TESTER_LAYOUT_PATH``).
+        Below them: appearance, and whether the last session is restored.
+Right — Custom layouts & mappings: the default location (the writable store
+        imports go to — selectable, unless ``TRAP_TESTER_LAYOUTS_DIR`` forces
+        it) plus the extra folders searched for layouts/mapping CSVs (add /
+        remove; also fed by ``TRAP_TESTER_LAYOUT_PATH``).
 
 Changing anything emits :data:`changed` so the main window can refresh the other
 panels' browsers and selectors without a restart.
@@ -22,6 +23,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QGroupBox,
@@ -36,12 +38,15 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from trap_tester.core import session
 from trap_tester.core.appconfig import (
     analysis_dir,
     measurements_dir,
     presets_dir,
+    restore_session,
     results_dir,
     set_presets_dir,
+    set_restore_session,
     set_results_dir,
     set_theme,
     set_ui_scale,
@@ -53,6 +58,8 @@ from trap_tester.core.layout import (
     configured_layout_dirs,
     env_layout_dirs,
     remove_layout_dir,
+    set_user_layouts_dir,
+    store_dir_from_env,
     user_layouts_dir,
 )
 
@@ -62,6 +69,7 @@ class SettingsPanel(QWidget):
 
     changed = Signal()  # paths / folders changed (panels re-read files)
     themeChanged = Signal(str)  # UI theme changed (apply light/dark live)
+    sessionForgotten = Signal()  # saved session cleared: don't save this one on exit
 
     _THEME_LABELS = [("Light", "light"), ("Dark", "dark")]
     # Offered steps. appconfig clamps to its own bounds, so a hand-edited config can
@@ -74,6 +82,7 @@ class SettingsPanel(QWidget):
         left = QVBoxLayout()
         left.addWidget(self._build_output_box())
         left.addWidget(self._build_appearance_box())
+        left.addWidget(self._build_session_box())
         left.addStretch(1)
         outer.addLayout(left, 1)
         outer.addWidget(self._build_layouts_box(), 1)
@@ -185,6 +194,53 @@ class SettingsPanel(QWidget):
         )
         self._scale_note.setVisible(True)
 
+    # ---- session -----------------------------------------------------------
+    def _build_session_box(self) -> QWidget:
+        box = QGroupBox("Session")
+        box.setProperty("role", "interactive")
+        v = QVBoxLayout(box)
+        self._restore_check = QCheckBox("Reopen where I left off")
+        self._restore_check.setProperty("role", "interactive")
+        self._restore_check.setToolTip(
+            "On exit, remember the window, the selected panel and each panel's\n"
+            "selections and unsaved inputs (measurement settings, the loaded\n"
+            "result and its criteria, interface marks…), and restore them on the\n"
+            "next start."
+        )
+        self._restore_check.setChecked(restore_session())
+        self._restore_check.toggled.connect(set_restore_session)
+        v.addWidget(self._restore_check)
+
+        row = QHBoxLayout()
+        self._forget_btn = QPushButton("Start fresh next time")
+        self._forget_btn.setProperty("role", "interactive")
+        self._forget_btn.setToolTip(
+            "Forget the saved session, and don't save this one on exit:\n"
+            "the next start opens with the defaults."
+        )
+        self._forget_btn.clicked.connect(self._forget_session)
+        row.addWidget(self._forget_btn)
+        row.addStretch(1)
+        v.addLayout(row)
+
+        self._session_note = QLabel(f"Saved in {session.session_path()}")
+        self._session_note.setProperty("role", "viewer")
+        self._session_note.setWordWrap(True)
+        self._session_note.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        v.addWidget(self._session_note)
+        return box
+
+    def _forget_session(self) -> None:
+        try:
+            session.clear()
+        except OSError as exc:
+            QMessageBox.warning(self, "Cannot clear session", str(exc))
+            return
+        self.sessionForgotten.emit()
+        self._session_note.setText(
+            "Saved session cleared — the next start opens with the defaults."
+        )
+
     # ---- custom layout / mapping folders -----------------------------------
     def _build_layouts_box(self) -> QWidget:
         box = QGroupBox("Custom layouts / mappings")
@@ -193,10 +249,23 @@ class SettingsPanel(QWidget):
 
         v.addWidget(_wrap_label(
             "Interface layouts (*.json) and cross-interface mappings (*.csv) are "
-            "read from these folders, recursively. Imports and deletes only ever "
-            "touch the writable store; the extra folders are read-only."
+            "read from these folders, recursively. Imports go to the default "
+            "location, which is always searched; the extra folders are read-only."
         ))
 
+        self._store_setting = _PathSetting(
+            "Default location:", user_layouts_dir, set_user_layouts_dir,
+            "Choose the default location for layouts and mappings",
+        )
+        forced = store_dir_from_env()
+        if forced is not None:
+            self._store_setting.lock(
+                "Set by TRAP_TESTER_LAYOUTS_DIR — unset it to choose here."
+            )
+        self._store_setting.changed.connect(self._on_store_changed)
+        v.addWidget(self._store_setting)
+
+        v.addWidget(QLabel("Searched folders:"))
         self._folders = QListWidget()
         self._folders.setSelectionMode(QAbstractItemView.SingleSelection)
         self._folders.setProperty("role", "viewer")
@@ -216,10 +285,14 @@ class SettingsPanel(QWidget):
         v.addLayout(btn_row)
         return box
 
+    def _on_store_changed(self) -> None:
+        self._reload_folders()
+        self.changed.emit()
+
     def _reload_folders(self) -> None:
         """List the writable store + env folders (read-only) + the removable ones."""
         self._folders.clear()
-        self._add_readonly(user_layouts_dir(), "writable store (imports go here)")
+        self._add_readonly(user_layouts_dir(), "default location (imports go here)")
         for d in env_layout_dirs():
             self._add_readonly(d, "from TRAP_TESTER_LAYOUT_PATH")
         for d in configured_layout_dirs():
@@ -315,8 +388,22 @@ class _PathSetting(QWidget):
         btn_row.addWidget(reset_btn)
         btn_row.addStretch(1)
         v.addLayout(btn_row)
+        self._inputs = (self._edit, browse, apply_btn, reset_btn)
+
+        self._note = QLabel()
+        self._note.setProperty("role", "viewer")
+        self._note.setWordWrap(True)
+        self._note.setVisible(False)
+        v.addWidget(self._note)
 
         self.refresh()
+
+    def lock(self, reason: str) -> None:
+        """Show the value but refuse edits (e.g. an environment variable owns it)."""
+        for widget in self._inputs:
+            widget.setEnabled(False)
+        self._note.setText(reason)
+        self._note.setVisible(True)
 
     def refresh(self) -> None:
         self._edit.setText(str(self._read()))

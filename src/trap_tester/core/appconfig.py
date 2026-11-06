@@ -31,6 +31,7 @@ _DEFAULT_PRESETS = "analysis_presets"  # a sub-folder of the app data dir
 _THEME_KEY = "theme"
 _DEFAULT_THEME = "light"
 _THEMES = ("light", "dark")
+_RESTORE_SESSION_KEY = "restore_session"
 _UI_SCALE_KEY = "ui_scale"
 _DEFAULT_UI_SCALE = 1.0
 # Bounds, not a fixed list: the Settings tab offers steps but a hand-edited config
@@ -161,6 +162,24 @@ def set_ui_scale(factor: float | None) -> float:
     return ui_scale()
 
 
+def restore_session() -> bool:
+    """Whether the GUI reopens where it was left (default on).
+
+    The session itself is in ``core.session``; this is only the operator's
+    choice, so turning it off keeps the last session file until it is cleared.
+    """
+    value = _load().get(_RESTORE_SESSION_KEY, True)
+    return value if isinstance(value, bool) else True
+
+
+def set_restore_session(enabled: bool) -> bool:
+    """Persist whether the GUI restores the last session. Returns it."""
+    data = _load()
+    data[_RESTORE_SESSION_KEY] = bool(enabled)
+    _save(data)
+    return data[_RESTORE_SESSION_KEY]
+
+
 __all__ = [
     "UI_SCALE_MAX",
     "UI_SCALE_MIN",
@@ -169,8 +188,10 @@ __all__ = [
     "default_presets_dir",
     "measurements_dir",
     "presets_dir",
+    "restore_session",
     "results_dir",
     "set_presets_dir",
+    "set_restore_session",
     "set_results_dir",
     "set_theme",
     "set_ui_scale",

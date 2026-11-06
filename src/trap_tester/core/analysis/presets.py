@@ -14,6 +14,7 @@ scalar settings rather than nested inside them::
       "measurement": "measure_filter",
       "analysis": "standard",
       "name": "AFE v2 acceptance",
+      "mapping": "mapping_interposer.csv",
       "settings": {"c_min_nf": 0.75, "c_max_nf": 1.25, "rel_tol": 0.1, ...},
       "reference": {
         "source": "test-20260728-142201.json",
@@ -27,6 +28,13 @@ in the Settings tab), are discovered recursively so they can be organised into
 sub-folders, and are always scoped to one measurement *and* one analysis mode:
 loading a filter preset over a voltage result is rejected rather than silently
 ignored. A preset without an ``analysis`` key belongs to the default mode.
+
+``mapping`` (optional) names the cross-interface mapping CSV the criteria were
+made with — by *file name*, not path, because the layout folders sit in different
+places on different machines. It matters most in loopback mode, where the
+mapping places the board's pads on tester pins, so the criteria are only right
+together with it. Choosing the preset selects that mapping again (see
+:func:`find_mapping`); a preset without the key leaves the selection alone.
 """
 
 from __future__ import annotations
@@ -43,6 +51,7 @@ from trap_tester.core.analysis import (
     mode_of_settings,
 )
 from trap_tester.core.appconfig import presets_dir
+from trap_tester.core.layout.store import list_mapping_files
 
 if TYPE_CHECKING:
     from trap_tester.core.analysis.acceptance import Reference
@@ -61,6 +70,7 @@ class Preset:
     settings: Any  # an AcceptanceSettings dataclass instance
     path: Path | None = field(default=None, compare=False)
     analysis: str = DEFAULT_MODE  # an AnalysisMode.key of the measurement
+    mapping: str = ""  # file name of the mapping CSV it was made with ("" = none)
 
     @property
     def reference(self) -> Reference:
@@ -93,6 +103,7 @@ def to_payload(preset: Preset) -> dict[str, Any]:
         "measurement": preset.measurement,
         "analysis": preset.analysis,
         "name": preset.name,
+        **({"mapping": preset.mapping} if preset.mapping else {}),
         "settings": settings,
         "reference": reference,
     }
@@ -123,9 +134,12 @@ def from_payload(data: Any, path: Path | None = None) -> Preset:
     raw["reference"] = data.get("reference") or {}
     settings = mode.settings.from_dict(raw)
     name = str(data.get("name") or "") or (path.stem if path else measurement)
+    mapping = data.get("mapping") or ""
+    if not isinstance(mapping, str):
+        raise ValueError("'mapping' must be the file name of a mapping CSV")
     return Preset(
         name=name, measurement=measurement, settings=settings, path=path,
-        analysis=analysis,
+        analysis=analysis, mapping=Path(mapping).name,  # a name, never a path
     )
 
 
@@ -136,16 +150,22 @@ def load(path: str | Path) -> Preset:
 
 
 def save(
-    settings: Any, measurement: str, name: str, directory: str | Path | None = None
+    settings: Any,
+    measurement: str,
+    name: str,
+    directory: str | Path | None = None,
+    mapping: str | Path | None = None,
 ) -> Path:
     """Write a preset and return its path (an existing name is never clobbered).
 
     The analysis mode is the one ``settings`` belongs to, so it cannot disagree
-    with the settings that are saved.
+    with the settings that are saved. ``mapping`` is the selected mapping CSV
+    (a path or a file name; only the file name is stored), or ``None``.
     """
     analysis = mode_of_settings(measurement, settings) or DEFAULT_MODE
     preset = Preset(
-        name=name, measurement=measurement, settings=settings, analysis=analysis
+        name=name, measurement=measurement, settings=settings, analysis=analysis,
+        mapping=Path(mapping).name if mapping else "",
     )
     dest_dir = Path(directory) if directory is not None else presets_dir()
     dest_dir.mkdir(parents=True, exist_ok=True)
@@ -190,8 +210,23 @@ def import_preset(src: str | Path, name: str | None = None) -> Path:
     src = Path(src)
     preset = load(src)
     return save(
-        preset.settings, preset.measurement, name or preset.name or src.stem
+        preset.settings, preset.measurement, name or preset.name or src.stem,
+        mapping=preset.mapping or None,
     )
+
+
+def find_mapping(name: str) -> Path | None:
+    """The mapping CSV called ``name`` in the layout folders, or ``None``.
+
+    Searched in the same order as the mapping selector (default location first),
+    so with two files of the same name the one listed first wins.
+    """
+    if not name:
+        return None
+    for path in list_mapping_files():
+        if path.name == name:
+            return path
+    return None
 
 
 def delete(path: str | Path) -> None:
@@ -209,6 +244,7 @@ __all__ = [
     "SUFFIX",
     "Preset",
     "delete",
+    "find_mapping",
     "from_payload",
     "import_preset",
     "list_presets",

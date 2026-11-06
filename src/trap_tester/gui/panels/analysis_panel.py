@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from trap_tester.core import analysis as analysis_engine
+from trap_tester.core import session
 from trap_tester.core import settings as settings_io
 from trap_tester.core.analysis import golden
 from trap_tester.core.analysis import presets as preset_store
@@ -97,6 +98,7 @@ class AnalysisPanel(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("columns")  # session: keeps its sizes
         splitter.addWidget(self._build_left())  # column 1 (view + result browser)
         splitter.addWidget(self._build_center())  # column 2 (visualiser + report)
         splitter.addWidget(self._build_right())  # column 3 (parameters)
@@ -119,6 +121,99 @@ class AnalysisPanel(QWidget):
         self._refresh_layouts()
         self._refresh_mappings()
         self._refresh_presets()
+        self._sync_store_tooltips()
+
+    def _sync_store_tooltips(self) -> None:
+        self._import_btn.setToolTip(
+            f"Import a custom interface layout JSON into {user_layouts_dir()}"
+        )
+        self._import_mapping_btn.setToolTip(
+            f"Import a cross-interface mapping CSV into {user_layouts_dir()}"
+        )
+
+    # ---- session -----------------------------------------------------------
+    def session_state(self) -> dict[str, Any]:
+        """The view selectors, the loaded result and the criteria as edited.
+
+        The criteria are kept as a preset payload (the same format "Save as…"
+        writes), so unsaved edits — a golden reference, a loopback board, the
+        FPC tickbox — survive a restart without being saved as a preset.
+        """
+        state: dict[str, Any] = {
+            "view": self._view_selector.currentIndex(),
+            "layout": self._layout_selector.currentData(),
+            "mapping": self._mapping_selector.currentData(),
+            "show_all": self._show_all.isChecked(),
+            "connector": self._conn_selector.currentData(),
+            "result": str(self._source) if self._source else None,
+            "mode": self._mode,
+            "preset": self._preset_selector.currentData(),
+        }
+        if self._form is not None and self._measurement:
+            try:
+                state["criteria"] = preset_store.to_payload(preset_store.Preset(
+                    name="session", measurement=self._measurement,
+                    settings=self._form.get_settings(),
+                    analysis=self._mode or analysis_engine.DEFAULT_MODE,
+                ))
+            except (ValueError, TypeError):
+                pass  # a half-typed field: the preset (if any) is restored instead
+        return state
+
+    def restore_session(self, state: dict[str, Any]) -> None:
+        # the selectors first, so the result is drawn (and judged) through them
+        view = state.get("view")
+        if isinstance(view, int) and 0 <= view < self._view_selector.count():
+            self._view_selector.setCurrentIndex(view)
+        for selector, token in (
+            (self._layout_selector, state.get("layout")),
+            (self._mapping_selector, state.get("mapping")),
+        ):
+            idx = selector.findData(token) if token else -1
+            if idx >= 0:
+                selector.blockSignals(True)
+                selector.setCurrentIndex(idx)
+                selector.blockSignals(False)
+        self._show_all.blockSignals(True)
+        self._show_all.setChecked(bool(state.get("show_all")))
+        self._show_all.blockSignals(False)
+        if isinstance(state.get("mode"), str):
+            self._mode = state["mode"]  # kept by _refresh_modes if the result has it
+
+        result = state.get("result")
+        if not isinstance(result, str) or not Path(result).is_file():
+            self._render()
+            return
+        self._load_file(result)  # runs the analysis once with the defaults
+        self._browser.select_data(str(Path(result).resolve()))
+        if self._form is None:
+            return
+
+        preset = state.get("preset")
+        idx = self._preset_selector.findData(preset) if preset else -1
+        if idx >= 0:  # shown as selected; the criteria below are what it held
+            self._preset_selector.blockSignals(True)
+            self._preset_selector.setCurrentIndex(idx)
+            self._preset_selector.blockSignals(False)
+        try:
+            criteria = preset_store.from_payload(state.get("criteria"))
+        except (ValueError, TypeError, KeyError):  # absent, or from an older version
+            criteria = None
+        if criteria is not None and (
+            criteria.measurement == self._measurement and criteria.analysis == self._mode
+        ):
+            self._form.set_settings(criteria.settings)
+            self._sync_reference()
+            self._sync_board()
+            self.run_analysis()
+        elif idx >= 0:
+            self._on_preset_changed(idx)  # no usable criteria: re-read the preset
+        # else: the defaults the load already judged with are all there is
+
+        connector = state.get("connector")
+        idx = self._conn_selector.findData(connector) if connector is not None else -1
+        if idx >= 0:
+            self._conn_selector.setCurrentIndex(idx)  # re-renders
 
     # ---- columns -----------------------------------------------------------
     def _build_left(self) -> QWidget:
@@ -329,7 +424,9 @@ class AnalysisPanel(QWidget):
         row.addWidget(self._preset_selector, 1)
         self._save_preset_btn = QPushButton("Save as…")
         self._save_preset_btn.setProperty("role", "interactive")
-        self._save_preset_btn.setToolTip("Save the parameters below as a preset")
+        self._save_preset_btn.setToolTip(
+            "Save the parameters below, with the selected mapping, as a preset"
+        )
         self._save_preset_btn.clicked.connect(self._save_preset)
         row.addWidget(self._save_preset_btn)
         self._import_preset_btn = QPushButton("Import…")
@@ -374,6 +471,7 @@ class AnalysisPanel(QWidget):
 
     def _build_center(self) -> QWidget:
         col = QSplitter(Qt.Vertical)
+        col.setObjectName("visualiser")
 
         viz_box = QGroupBox("Result visualiser")
         viz_box.setProperty("role", "viewer")
@@ -540,6 +638,11 @@ class AnalysisPanel(QWidget):
         if settings_type is not None:
             self._form = SettingsForm(settings_type())
             self._params_layout.addWidget(self._form)
+            # The FPC inversion relabels every pin, so — like the mapping — it
+            # re-runs at once instead of waiting for "Run analysis".
+            fpc_box = self._form.editor("fpc_inverted")
+            if isinstance(fpc_box, QCheckBox):
+                fpc_box.toggled.connect(self._on_fpc_inverted)
         self._refresh_presets()
         self._sync_reference()
         self._sync_board()
@@ -575,6 +678,12 @@ class AnalysisPanel(QWidget):
         self._render()  # the mapping row's enabled state depends on the mode
         self.run_analysis()
 
+    def _on_fpc_inverted(self, checked: bool) -> None:
+        self.run_analysis()
+        if self._result is not None:
+            state = "inverted" if checked else "straight"
+            self._status.setText(f"FPC {state}: {self._status.text()}")
+
     def _needs_mapping(self) -> bool:
         mode = analysis_engine.analysis_mode(self._measurement, self._mode)
         return mode is not None and mode.needs_mapping
@@ -583,8 +692,9 @@ class AnalysisPanel(QWidget):
     def _refresh_presets(self) -> None:
         """List the presets saved for the loaded measurement, keeping the choice."""
         self._preset_selector.setToolTip(
-            "Saved acceptance criteria for this measurement — limits, tolerances\n"
-            f"and any golden reference. Stored in {presets_dir()}."
+            "Saved acceptance criteria for this measurement — limits, tolerances,\n"
+            "any golden reference or loopback board, and the selected mapping\n"
+            f"(chosen again with the preset). Stored in {presets_dir()}."
         )
         keep = self._preset_selector.currentData()
         self._preset_selector.blockSignals(True)
@@ -627,8 +737,31 @@ class AnalysisPanel(QWidget):
         self._form.set_settings(preset.settings)
         self._sync_reference()
         self._sync_board()
-        self._status.setText(f"Preset '{preset.name}' applied.")
+        missing = self._select_preset_mapping(preset.mapping)
         self.run_analysis()
+        if missing:
+            self._status.setText(f"Preset '{preset.name}' applied. {missing}")
+
+    def _select_preset_mapping(self, name: str) -> str:
+        """Select the mapping a preset was made with; say so when it is missing.
+
+        Silent (no re-run): the caller runs the analysis once with everything
+        applied. A preset without a mapping leaves the selection alone.
+        """
+        if not name:
+            return ""
+        path = preset_store.find_mapping(name)
+        idx = self._mapping_selector.findData(str(path)) if path else -1
+        if idx < 0:
+            current = self._mapping_selector.currentText()
+            return (
+                f"⚠ Its mapping '{name}' is not in the layout folders — "
+                f"kept '{current}'."
+            )
+        self._mapping_selector.blockSignals(True)
+        self._mapping_selector.setCurrentIndex(idx)
+        self._mapping_selector.blockSignals(False)
+        return ""
 
     # ---- golden reference --------------------------------------------------
     def _current_reference(self) -> Reference:
@@ -786,7 +919,10 @@ class AnalysisPanel(QWidget):
         if not ok or not name:
             return
         try:
-            path = preset_store.save(settings, self._measurement, name)
+            path = preset_store.save(
+                settings, self._measurement, name,
+                mapping=self._mapping_selector.currentData(),  # None: inherent
+            )
         except OSError as exc:
             QMessageBox.warning(self, "Save failed", f"Could not write preset:\n{exc}")
             return
@@ -796,7 +932,9 @@ class AnalysisPanel(QWidget):
             self._preset_selector.blockSignals(True)  # already applied; don't re-run
             self._preset_selector.setCurrentIndex(idx)
             self._preset_selector.blockSignals(False)
-        self._status.setText(f"Preset saved to {path}.")
+        mapping = self._mapping_selector.currentData()
+        with_mapping = f" with mapping '{Path(mapping).name}'" if mapping else ""
+        self._status.setText(f"Preset saved{with_mapping} to {path}.")
 
     def _import_preset(self) -> None:
         path, _ = QFileDialog.getOpenFileName(

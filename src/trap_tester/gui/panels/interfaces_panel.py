@@ -24,6 +24,7 @@ they describe the setup rather than one view.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPainter, QPalette, QPixmap
@@ -42,6 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from trap_tester.core import session
 from trap_tester.core.layout import (
     TESTER_CONNECTORS,
     AnnotationSet,
@@ -140,6 +142,28 @@ class _InterfaceSource(QWidget):
     def select_default(self) -> None:
         self.selector.setCurrentIndex(0)
 
+    def session_state(self) -> dict[str, Any]:
+        return {
+            "layout": self.token(),
+            "connector": self.conn_spin.value(),
+            "show_all": self.show_all.isChecked(),
+        }
+
+    def restore_session(self, state: dict[str, Any]) -> None:
+        """Re-apply :meth:`session_state` silently (the panel redraws once after)."""
+        for widget in (self.selector, self.conn_spin, self.show_all):
+            widget.blockSignals(True)
+        token = state.get("layout")
+        idx = self.selector.findData(token) if token else -1
+        if idx >= 0:
+            self.selector.setCurrentIndex(idx)
+        connector = state.get("connector")
+        if isinstance(connector, int):
+            self.conn_spin.setValue(connector)  # clamped to the range
+        self.show_all.setChecked(bool(state.get("show_all")))
+        for widget in (self.selector, self.conn_spin, self.show_all):
+            widget.blockSignals(False)
+
     def sync_enabled(self, conn_max: int) -> None:
         """Grey out the connector controls where they do not apply."""
         self.connector_bar.sync_enabled(self.is_builtin(), conn_max)
@@ -230,6 +254,7 @@ class InterfacesPanel(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("columns")  # session: keeps its sizes
         splitter.addWidget(self._build_left())
         splitter.addWidget(self._build_right())
         splitter.setStretchFactor(0, 0)
@@ -249,6 +274,49 @@ class InterfacesPanel(QWidget):
         self._mapping_cache.clear()
         self._refresh_interfaces()
         self._refresh_mappings()
+        self._update_view()
+        for btn, what in (
+            (self._import_btn, "a custom interface layout JSON"),
+            (self._import_mapping_btn, "a cross-interface mapping CSV"),
+        ):
+            btn.setToolTip(f"Import {what} into {user_layouts_dir()}")
+
+    # ---- session -----------------------------------------------------------
+    def session_state(self) -> dict[str, Any]:
+        """Both sides' interfaces, the split, the mapping — and the marks.
+
+        The marks are kept even though they were never saved: losing an
+        afternoon of annotation to a closed window is the case this is for.
+        """
+        return {
+            "a": self._src_a.session_state(),
+            "b": self._src_b.session_state(),
+            "split": self._split.isChecked(),
+            "mapping": self._mapping_selector.currentData(),
+            "annotations": self._view_a.annotations().to_dict(),
+        }
+
+    def restore_session(self, state: dict[str, Any]) -> None:
+        self._src_a.restore_session(session.section(state, "a"))
+        self._src_b.restore_session(session.section(state, "b"))
+        token = state.get("mapping")
+        idx = self._mapping_selector.findData(token) if token else -1
+        if idx >= 0:
+            self._mapping_selector.blockSignals(True)
+            self._mapping_selector.setCurrentIndex(idx)
+            self._mapping_selector.blockSignals(False)
+        try:
+            annset = AnnotationSet.from_dict(state.get("annotations") or {})
+        except (ValueError, TypeError, KeyError):
+            annset = None  # an older format: start with no marks
+        if annset is not None:
+            # both views share ONE set, as after Load
+            self._view_a.set_annotations(annset)
+            self._view_b.set_annotations(annset)
+        self._split.blockSignals(True)
+        self._split.setChecked(bool(state.get("split")))
+        self._split.blockSignals(False)
+        self._pane_b.setVisible(self._split.isChecked())
         self._update_view()
 
     # ---- columns -----------------------------------------------------------
@@ -385,6 +453,7 @@ class InterfacesPanel(QWidget):
 
         # a splitter so the divider can be dragged when the two differ in shape
         self._views = QSplitter(Qt.Horizontal)
+        self._views.setObjectName("views")
         self._views.addWidget(self._pane_a)
         self._views.addWidget(self._pane_b)
         self._views.setStretchFactor(0, 1)

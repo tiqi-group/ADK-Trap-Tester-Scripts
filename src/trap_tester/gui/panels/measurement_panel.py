@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from trap_tester.core import session
 from trap_tester.core import settings as settings_io
 from trap_tester.core import measurements as _core_measurements
 from trap_tester.core.appconfig import measurements_dir, results_dir
@@ -107,11 +108,13 @@ class MeasurementPanel(QWidget):
         self._reporter: QtReporter | None = None
         self._gate: QtGate | None = None
         self._run_fn: Callable[..., Any] | None = run_filter_measurement
+        self._key = "measure_filter"  # the measurement the form is for
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         self._left = self._build_left()
         self._splitter = QSplitter(Qt.Horizontal)
+        self._splitter.setObjectName("columns")  # session: keeps its sizes
         self._splitter.addWidget(self._left)  # column 1 (file selectors)
         self._splitter.addWidget(self._build_center())  # column 2
         self._splitter.addWidget(self._build_right())  # column 3
@@ -127,9 +130,43 @@ class MeasurementPanel(QWidget):
         measurements_dir().mkdir(parents=True, exist_ok=True)
         self._result_browser.set_directory(results_dir())
 
+    # ---- session -----------------------------------------------------------
+    def session_state(self) -> dict[str, Any]:
+        """The chosen measurement, its settings, the device and the file column."""
+        kind, serial = self._device_combo.currentData() or ("mock", None)
+        state: dict[str, Any] = {
+            "measurement": self._key,
+            "device": {"kind": kind, "serial": serial},
+            "files_visible": not self._left.isHidden(),
+        }
+        try:
+            state["settings"] = self._form.get_settings().to_dict()
+        except (ValueError, TypeError):
+            pass  # a half-typed field: keep the rest, the form restores its defaults
+        return state
+
+    def restore_session(self, state: dict[str, Any]) -> None:
+        key = state.get("measurement")
+        if key in _MEASUREMENTS:
+            self._choose_measurement(key)
+            self._definition_browser.select_data(key)
+        settings = session.dataclass_from_dict(self._settings_type, state.get("settings"))
+        if settings is not None:
+            self._form.set_settings(settings)
+        device = session.section(state, "device")
+        wanted = (device.get("kind"), device.get("serial"))
+        for i in range(self._device_combo.count()):
+            # only if that device is attached now; else keep the preferred one
+            if tuple(self._device_combo.itemData(i) or ()) == wanted:
+                self._device_combo.setCurrentIndex(i)
+                break
+        if state.get("files_visible") is False:
+            self._set_files_visible(False)
+
     # ---- columns -----------------------------------------------------------
     def _build_left(self) -> QWidget:
         col = QSplitter(Qt.Vertical)
+        col.setObjectName("files")
         self._definition_browser = FileBrowser(
             "Measurement Definition",
             entries=[(_DISPLAY_NAME[k], k) for k in _DEFINITION_ORDER],
@@ -275,7 +312,9 @@ class MeasurementPanel(QWidget):
 
     # ---- layout ------------------------------------------------------------
     def _toggle_files(self) -> None:
-        show = not self._left.isVisible()
+        self._set_files_visible(self._left.isHidden())
+
+    def _set_files_visible(self, show: bool) -> None:
         self._left.setVisible(show)
         self._toggle_files_btn.setText("❮ Hide files" if show else "❯ Show files")
 
@@ -289,6 +328,7 @@ class MeasurementPanel(QWidget):
             return
         run_fn, settings_type = entry
         self._run_fn = run_fn
+        self._key = key
         self._apply_settings_type(settings_type, key)
         self._start_btn.setEnabled(self._worker is None)
         self._status.setText(
@@ -343,6 +383,7 @@ class MeasurementPanel(QWidget):
         entry = _MEASUREMENTS.get(measurement or "")
         if entry is not None:
             self._run_fn = entry[0]
+            self._key = measurement
             self._apply_settings_type(entry[1], measurement, settings)
             self._start_btn.setEnabled(self._worker is None)
         else:

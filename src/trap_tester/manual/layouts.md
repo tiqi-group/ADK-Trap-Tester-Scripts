@@ -14,8 +14,8 @@ kept in a git repository.
 Layouts (`*.json`) and mappings (`*.csv`) are looked for in these folders, sub-folders
 included:
 
-* the **writable store**: `layouts/` in the app data folder (see
-  [Settings](settings.md#the-app-data-folder));
+* the **default location**: `layouts/` in the app data folder unless you chose
+  another folder in [Settings](settings.md#custom-layouts--mappings);
 * extra folders added in [Settings](settings.md#custom-layouts--mappings) or with
   **Folders…** in the Analysis and Interfaces panels;
 * folders listed in the `TRAP_TESTER_LAYOUT_PATH` environment variable.
@@ -26,7 +26,7 @@ Files ending in `.loopback.json` are
 [loopback board files](analysis.md#the-loopback-board-file), not layouts, and are
 skipped.
 
-**Import…** checks a file before copying it into the writable store. A layout is
+**Import…** checks a file before copying it into the default location. A layout is
 also normalised on the way in. An existing file is never overwritten; the copy gets a
 `-2`, `-3`, … suffix. The extra folders are only ever read.
 

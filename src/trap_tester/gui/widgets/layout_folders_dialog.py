@@ -93,7 +93,7 @@ class LayoutFoldersDialog(QDialog):
     def _reload(self) -> None:
         """Rebuild the list: writable store + env dirs (read-only) + persisted."""
         self._list.clear()
-        self._add_readonly(user_layouts_dir(), "writable store")
+        self._add_readonly(user_layouts_dir(), "default location (imports go here)")
         for d in env_layout_dirs():
             self._add_readonly(d, "from TRAP_TESTER_LAYOUT_PATH")
         for d in configured_layout_dirs():

@@ -12,6 +12,7 @@ measurement worker thread against the selected device / the mock).
 
 from __future__ import annotations
 
+from dataclasses import asdict
 from typing import Any
 
 from PySide6.QtCore import Qt
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from trap_tester.core import session
 from trap_tester.core.device import enumerate_devices
 from trap_tester.core.selftest import (
     SelfTestSettings,
@@ -68,6 +70,7 @@ class SelfTestPanel(QWidget):
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("columns")  # session: keeps its sizes
         splitter.addWidget(self._build_left())
         splitter.addWidget(self._build_center())
         splitter.addWidget(self._build_right())
@@ -78,6 +81,34 @@ class SelfTestPanel(QWidget):
         outer.addWidget(splitter)
 
         self._tests.setCurrentRow(0)  # triggers _on_test_changed
+
+    # ---- session -----------------------------------------------------------
+    def session_state(self) -> dict[str, Any]:
+        kind, serial = self._device_combo.currentData() or ("mock", None)
+        state: dict[str, Any] = {
+            "test": self._current_test(),
+            "device": {"kind": kind, "serial": serial},
+        }
+        try:
+            state["settings"] = asdict(self._form.get_settings())
+        except (ValueError, TypeError):
+            pass  # a half-typed field: the form restores its defaults
+        return state
+
+    def restore_session(self, state: dict[str, Any]) -> None:
+        for row in range(self._tests.count()):
+            if self._tests.item(row).data(256) == state.get("test"):
+                self._tests.setCurrentRow(row)
+                break
+        settings = session.dataclass_from_dict(SelfTestSettings, state.get("settings"))
+        if settings is not None:
+            self._form.set_settings(settings)
+        device = session.section(state, "device")
+        wanted = (device.get("kind"), device.get("serial"))
+        for i in range(self._device_combo.count()):
+            if tuple(self._device_combo.itemData(i) or ()) == wanted:
+                self._device_combo.setCurrentIndex(i)
+                break
 
     # ---- columns -----------------------------------------------------------
     def _build_left(self) -> QWidget:

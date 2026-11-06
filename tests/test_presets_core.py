@@ -145,3 +145,51 @@ def test_configured_presets_dir_is_used(tmp_path):
         assert [n for n, _ in presets.list_presets()] == ["shared one"]
     finally:
         set_presets_dir(None)
+
+
+# ---- the mapping the criteria were made with --------------------------------
+def test_mapping_is_stored_by_file_name(_store):
+    path = presets.save(
+        _filter_settings(), "measure_filter", "with mapping",
+        mapping=_store / "some" / "dir" / "mapping_interposer.csv",
+    )
+    payload = json.loads(path.read_text())
+    assert payload["mapping"] == "mapping_interposer.csv"  # never a path
+    assert presets.load(path).mapping == "mapping_interposer.csv"
+
+
+def test_no_mapping_writes_no_key():
+    path = presets.save(_filter_settings(), "measure_filter", "inherent", mapping=None)
+    assert "mapping" not in json.loads(path.read_text())
+    assert presets.load(path).mapping == ""
+
+
+def test_a_hand_written_path_is_reduced_to_its_name():
+    path = presets.save(_filter_settings(), "measure_filter", "hand edited")
+    payload = json.loads(path.read_text())
+    payload["mapping"] = "/elsewhere/sub/wiring.csv"
+    path.write_text(json.dumps(payload))
+    assert presets.load(path).mapping == "wiring.csv"
+    payload["mapping"] = 3
+    path.write_text(json.dumps(payload))
+    with pytest.raises(ValueError, match="mapping"):
+        presets.load(path)
+
+
+def test_import_keeps_the_mapping(_store):
+    src = _store / "outside.json"
+    payload = presets.to_payload(presets.Preset(
+        name="shared", measurement="measure_filter", settings=_filter_settings(),
+        mapping="wiring.csv",
+    ))
+    src.write_text(json.dumps(payload))
+    assert presets.load(presets.import_preset(src)).mapping == "wiring.csv"
+
+
+def test_find_mapping_searches_the_layout_folders(_store):
+    store = _store / "layouts"
+    (store / "sub").mkdir(parents=True)
+    (store / "sub" / "wiring.csv").write_text("x\n")
+    assert presets.find_mapping("wiring.csv") == store / "sub" / "wiring.csv"
+    assert presets.find_mapping("missing.csv") is None
+    assert presets.find_mapping("") is None

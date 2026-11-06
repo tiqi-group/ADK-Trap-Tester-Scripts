@@ -111,6 +111,14 @@ class SettingsForm(QWidget):
                     label.setToolTip(text)
                 field_widget.setToolTip(text)
 
+    def editor(self, name: str) -> QWidget | None:
+        """The input widget of a field (``None`` for a hidden or unknown one).
+
+        For a caller that must react to one field at once rather than wait for
+        an explicit "apply", e.g. a tickbox that re-runs an analysis.
+        """
+        return self._editors.get(name)
+
     # ---- fields with no editor ---------------------------------------------
     def hidden(self, name: str) -> Any:
         """The current value of a ``hidden=True`` field."""
@@ -208,10 +216,14 @@ class SettingsForm(QWidget):
             editor = self._editors.get(f.name)
             if editor is None:
                 continue
+            # silenced per editor: loading settings is one change, announced
+            # once by ``changed`` below, not a user edit of every field
+            editor.blockSignals(True)
             if isinstance(editor, QComboBox):
                 editor.setCurrentText(str(value))
             elif isinstance(editor, QCheckBox):
                 editor.setChecked(bool(value))
             elif isinstance(editor, QLineEdit):
                 editor.setText(self._to_text(value))
+            editor.blockSignals(False)
         self.changed.emit()

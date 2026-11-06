@@ -72,7 +72,7 @@ def _smoke_test(app: QApplication) -> int:
     out, hiding the failure.
     """
     try:
-        window = MainWindow()
+        window = MainWindow(persist_session=False)  # leave the operator's session be
         window.show()
         for _ in range(5):  # let deferred/rebuilt widgets settle
             app.processEvents()

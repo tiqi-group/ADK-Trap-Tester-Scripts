@@ -9,8 +9,11 @@ the source tree, in a per-user data directory:
 * macOS:       ``~/Library/Application Support/trap-tester/layouts``
 * Windows:     ``%APPDATA%\\trap-tester\\layouts``
 
-Set ``TRAP_TESTER_LAYOUTS_DIR`` to override this *writable* store (e.g. a shared
-network folder, or a temp dir in tests). Every file is a plain
+The writable store can be moved to any folder from the Settings tab (see
+:func:`set_user_layouts_dir`; persisted in ``layout_sources.json``), e.g. a
+private git checkout that holds the team's layouts. Setting
+``TRAP_TESTER_LAYOUTS_DIR`` overrides both that choice and the OS default (e.g. a
+shared network folder, or a temp dir in tests). Every file is a plain
 :class:`InterfaceLayout` JSON — the same format as the built-in
 ``layouts/dsub50.json`` — so a layout exported from here (or hand-authored) can be
 dropped straight into the folder, or imported through the GUI, which validates and
@@ -43,6 +46,7 @@ _APP_DIR = "trap-tester"
 _ENV_VAR = "TRAP_TESTER_LAYOUTS_DIR"
 _PATH_ENV_VAR = "TRAP_TESTER_LAYOUT_PATH"  # os.pathsep-separated extra read dirs
 _CONFIG_NAME = "layout_sources.json"
+_STORE_KEY = "store"  # in _CONFIG_NAME: the writable store chosen in Settings
 # Loopback-board files may sit beside the layouts they refer to; this suffix keeps
 # them out of the layout selector (see core.analysis.loopback).
 LOOPBACK_SUFFIX = ".loopback.json"
@@ -64,12 +68,85 @@ def _base_data_dir() -> Path:
     return Path(xdg) if xdg else Path.home() / ".local" / "share"
 
 
-def user_layouts_dir() -> Path:
-    """Where custom layouts live. Honours ``TRAP_TESTER_LAYOUTS_DIR`` first."""
+def store_dir_from_env() -> Path | None:
+    """The store forced by ``TRAP_TESTER_LAYOUTS_DIR``, or ``None`` when unset."""
     override = os.environ.get(_ENV_VAR)
-    if override:
-        return Path(override).expanduser()
-    return _base_data_dir() / _APP_DIR / "layouts"
+    return Path(override).expanduser() if override else None
+
+
+def default_user_layouts_dir() -> Path:
+    """The store when nothing is configured: the env override, else the OS default."""
+    return store_dir_from_env() or _base_data_dir() / _APP_DIR / "layouts"
+
+
+def app_data_dir() -> Path:
+    """The per-user data root for this app (config files live here).
+
+    Config files (the extra-folder list, the app settings, the saved session) live
+    here. It is the parent of the *default* store — never of a store the user
+    moved in the Settings tab, because the setting saying where the store is
+    cannot live inside the store. It tracks ``TRAP_TESTER_LAYOUTS_DIR`` the same
+    way the store does, so pointing the store at a temp dir (e.g. in tests)
+    isolates the config alongside it.
+    """
+    return default_user_layouts_dir().parent
+
+
+def _config_path() -> Path:
+    """Where the persisted folder settings live (store choice + extra folders)."""
+    return app_data_dir() / _CONFIG_NAME
+
+
+def _read_config() -> dict:
+    path = _config_path()
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_config(data: dict) -> None:
+    path = _config_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2))
+
+
+def configured_user_layouts_dir() -> Path | None:
+    """The store folder chosen in the Settings tab, or ``None`` for the default."""
+    value = _read_config().get(_STORE_KEY)
+    return Path(value).expanduser() if isinstance(value, str) and value else None
+
+
+def user_layouts_dir() -> Path:
+    """Where custom layouts and mappings are imported to (the writable store).
+
+    ``TRAP_TESTER_LAYOUTS_DIR`` wins, then the folder chosen in the Settings tab,
+    then the OS-conventional default.
+    """
+    return (
+        store_dir_from_env()
+        or configured_user_layouts_dir()
+        or default_user_layouts_dir()
+    )
+
+
+def set_user_layouts_dir(path: str | Path | None) -> Path:
+    """Persist the writable store folder (``None``/blank restores the default).
+
+    The folder need not exist yet — it is created on the first import. Returns the
+    store now in effect (which is still the env override, if one is set).
+    """
+    data = _read_config()
+    text = str(path).strip() if path is not None else ""
+    if text:
+        data[_STORE_KEY] = text
+    else:
+        data.pop(_STORE_KEY, None)
+    _write_config(data)
+    return user_layouts_dir()
 
 
 def ensure_user_layouts_dir() -> Path:
@@ -79,31 +156,11 @@ def ensure_user_layouts_dir() -> Path:
     return path
 
 
-def app_data_dir() -> Path:
-    """The per-user data root for this app (parent of the writable layouts store).
-
-    Config files (the extra-folder list, the app settings) live here. It tracks
-    ``TRAP_TESTER_LAYOUTS_DIR`` the same way the store does, so pointing the store
-    at a temp dir (e.g. in tests) isolates the config alongside it.
-    """
-    return user_layouts_dir().parent
-
-
-def _config_path() -> Path:
-    """Where the persisted extra-folder list lives (next to the writable store)."""
-    return user_layouts_dir().parent / _CONFIG_NAME
-
-
 def configured_layout_dirs() -> list[Path]:
     """Extra folders the user added through the GUI (persisted, may be removed)."""
-    path = _config_path()
-    if not path.exists():
+    sources = _read_config().get("sources", [])
+    if not isinstance(sources, list):
         return []
-    try:
-        data = json.loads(path.read_text())
-    except (OSError, ValueError):
-        return []
-    sources = data.get("sources", []) if isinstance(data, dict) else []
     return [Path(s).expanduser() for s in sources if isinstance(s, str)]
 
 
@@ -138,9 +195,9 @@ def layout_search_dirs() -> list[Path]:
 
 
 def _write_config_dirs(dirs: list[Path]) -> None:
-    path = _config_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps({"sources": [str(d) for d in dirs]}, indent=2))
+    data = _read_config()  # keep the store choice beside the list
+    data["sources"] = [str(d) for d in dirs]
+    _write_config(data)
 
 
 def add_layout_dir(path: str | Path) -> Path:
@@ -270,6 +327,11 @@ def delete_layout(path: str | Path) -> None:
 __all__ = [
     "LOOPBACK_SUFFIX",
     "user_layouts_dir",
+    "default_user_layouts_dir",
+    "configured_user_layouts_dir",
+    "set_user_layouts_dir",
+    "store_dir_from_env",
+    "app_data_dir",
     "ensure_user_layouts_dir",
     "configured_layout_dirs",
     "env_layout_dirs",

@@ -72,6 +72,7 @@ class ManualPanel(QWidget):
         self._search_failed = False  # the last jump found nothing anywhere
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
+        splitter.setObjectName("columns")  # session: keeps its sizes
         splitter.addWidget(self._build_contents())
         splitter.addWidget(self._build_viewer())
         splitter.setStretchFactor(0, 0)

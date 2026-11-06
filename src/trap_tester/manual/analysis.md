@@ -48,9 +48,9 @@ can be captured as a **golden reference** that later boards are compared with.
   report to `results/analysis/<result name>-result.txt` (`-loopback-result.txt` in
   loopback mode).
 
-Editing a parameter does not re-run on its own; press **Run analysis**. Choosing a
-preset, capturing or clearing a reference, or loading a loopback board re-runs at
-once.
+Editing a parameter does not re-run on its own; press **Run analysis**. Ticking `fpc
+inverted`, choosing a preset, capturing or clearing a reference, or loading a
+loopback board re-runs at once.
 
 ## Verdicts
 
@@ -126,8 +126,8 @@ your setup, or use a golden reference.
 A device can be plugged into the tester's front-end FPC connector the other way
 round, so that its ribbon conductors arrive in reverse order: the tester's conductor
 $c$ touches the device's conductor $52 - c$ (51 becomes 1, 50 becomes 2, and the
-centre conductor 26 stays where it is). Tick `fpc inverted` and press **Run
-analysis** to undo this.
+centre conductor 26 stays where it is). Tick `fpc inverted` to undo this; the
+analysis re-runs at once.
 
 The inversion is undone at the tester end. Each measured pin is relabelled with the
 DSUB pin whose signal runs on the device's conductor, as if the ribbon had been
@@ -171,12 +171,21 @@ Details:
 ## Presets
 
 A preset is the parameters of one measurement and one mode under a name, including
-its golden reference or loopback board. Presets are JSON files in the presets folder
+its golden reference or loopback board, and the **mapping** that was selected when it
+was saved. Presets are JSON files in the presets folder
 (see [Settings](settings.md)); sub-folders are searched too, so a shared folder can
 be organised per project. Only the presets for the loaded measurement and mode are
 listed.
 
 * **Save as…** never overwrites: a name that exists gets `-2`, `-3`, … appended.
+* Choosing a preset also selects its mapping again. This matters most in
+  [loopback mode](#loopback-mode), where the mapping places the board's pads on
+  tester pins, so the criteria are only right together with it. The mapping is
+  stored by file name, not by folder, so the preset works on any machine whose
+  layout folders contain a file of that name; with two such files, the one listed
+  first in the mapping selector is used. If none is found, the current mapping is
+  kept and the status line says so. A preset saved with *Inherent (no mapping)*, or
+  saved before this option existed, leaves the mapping selection alone.
 * **Import…** checks the file, then copies it into the presets folder. A preset for
   the other mode of the same measurement switches the mode, so it can be applied.
 * The file is meant to be readable and editable by hand:
@@ -188,6 +197,7 @@ listed.
   "measurement": "measure_filter",
   "analysis": "standard",
   "name": "AFE v2 acceptance",
+  "mapping": "mapping_interposer.csv",
   "settings": {"fpc_inverted": false, "c_min_nf": 0.75, "c_max_nf": 1.25, "rel_tol": 0.1},
   "reference": {
     "source": "test_filter_test_20260728-142201.json",

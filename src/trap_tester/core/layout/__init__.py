@@ -76,6 +76,9 @@ from trap_tester.core.layout.store import (
     list_user_layouts,
     load_layout,
     remove_layout_dir,
+    set_user_layouts_dir,
+    store_dir_from_env,
+    default_user_layouts_dir,
     user_layouts_dir,
 )
 from trap_tester.core.layout.style import (
@@ -304,9 +307,12 @@ __all__ = [
     "point_in_poly",
     "primitive_from_dict",
     "remove_layout_dir",
+    "set_user_layouts_dir",
     "slot_pins",
     "slugify",
     "tile_connector_layouts",
     "user_layout_options",
+    "store_dir_from_env",
+    "default_user_layouts_dir",
     "user_layouts_dir",
 ]

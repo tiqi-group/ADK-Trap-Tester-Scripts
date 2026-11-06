@@ -63,6 +63,20 @@ class FileBrowser(QWidget):
         self._dir = Path(directory)
         self.refresh()
 
+    def select_data(self, data: str) -> bool:
+        """Highlight the row carrying ``data`` without emitting anything.
+
+        For restoring a selection (e.g. the last session's file): the caller has
+        already loaded it, so a ``selected`` signal would load it twice.
+        """
+        for row in range(self._list.count()):
+            item = self._list.item(row)
+            if item.data(256) == data:
+                self._list.setCurrentItem(item)
+                self._list.scrollToItem(item)
+                return True
+        return False
+
     def refresh(self) -> None:
         self._list.clear()
         if self._entries is not None:

@@ -46,6 +46,7 @@ class DevicePanel(QWidget):
         self._devices: list[dict[str, Any]] = []
 
         splitter = QSplitter(Qt.Horizontal)
+        splitter.setObjectName("columns")  # session: keeps its sizes
         splitter.addWidget(self._build_list())
         splitter.addWidget(self._build_info())
         splitter.setStretchFactor(0, 0)
@@ -60,6 +61,15 @@ class DevicePanel(QWidget):
         layout.addWidget(splitter)
 
         self.refresh()
+
+    # ---- session -----------------------------------------------------------
+    def session_state(self) -> dict[str, Any]:
+        return {"simulate": self._sim_checkbox.isChecked()}
+
+    def restore_session(self, state: dict[str, Any]) -> None:
+        simulate = bool(state.get("simulate"))
+        if simulate != self._sim_checkbox.isChecked():
+            self._sim_checkbox.setChecked(simulate)  # re-lists the devices
 
     # ---- columns -----------------------------------------------------------
     def _build_list(self) -> QWidget:
